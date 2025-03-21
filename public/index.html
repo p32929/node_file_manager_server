@@ -2025,7 +2025,7 @@
       const percent = Math.min(100, Math.round((uploadedBytes / file.size) * 100));
       progressBar.style.width = percent + '%';
       
-      // Calculate average speed from the moving window
+      // Calculate speed (use 0 if no speeds recorded)
       let avgSpeed = 0;
       if (uploadSpeeds.length > 0) {
         avgSpeed = uploadSpeeds.reduce((a, b) => a + b, 0) / uploadSpeeds.length;
@@ -2033,27 +2033,24 @@
       
       // Calculate estimated time remaining
       const remainingBytes = file.size - uploadedBytes;
-      let eta = remainingBytes / avgSpeed; // seconds
+      let eta = remainingBytes / (avgSpeed || 1); // Use 1 to avoid division by zero
       
       if (!isFinite(eta) || isNaN(eta)) {
         eta = 0;
       }
       
-      // Only update if we have valid speed data
-      if (avgSpeed > 0) {
-        const speedText = formatSize(avgSpeed) + '/s';
-        const etaText = formatTime(eta);
-        
-        // Create a single line status that includes all information
-        document.getElementById('uploadInfo').innerHTML = 
-          `<i class="fas fa-upload"></i> <span class="inline-status">${percent}%</span>` +
-          `<span class="status-divider">|</span>` +
-          `<span class="inline-status">${speedText}</span>` +
-          `<span class="status-divider">|</span>` +
-          `<span class="inline-status">Chunk ${currentChunk + 1}/${totalChunks}</span>` +
-          `<span class="status-divider">|</span>` +
-          `<span class="inline-status">ETA: ${etaText}</span>`;
-      }
+      // Always show all information, even if some values are still calculating
+      const speedText = avgSpeed > 0 ? formatSize(avgSpeed) + '/s' : 'calculating...';
+      const etaText = formatTime(eta);
+      const progressText = `${formatSize(uploadedBytes)} of ${formatSize(file.size)}`;
+      
+      // Create a consistent status display with all information
+      document.getElementById('uploadInfo').innerHTML = 
+        `<div style="line-height: 1.5;">
+          <div><i class="fas fa-upload"></i> Progress: ${percent}% (${progressText})</div>
+          <div>Speed: ${speedText} | Chunk: ${currentChunk + 1}/${totalChunks}</div>
+          <div>Time remaining: ${etaText}</div>
+        </div>`;
     }
     
     // Format time in seconds to a human-readable string
@@ -2424,46 +2421,6 @@
       
       // Add debug message
       console.log('File upload system initialized and ready');
-      
-      // Create troubleshoot button
-      const troubleshootBtn = document.createElement('button');
-      troubleshootBtn.innerHTML = '<i class="fas fa-upload"></i> START UPLOAD NOW';
-      troubleshootBtn.style.position = 'fixed';
-      troubleshootBtn.style.top = '20px';
-      troubleshootBtn.style.right = '20px';
-      troubleshootBtn.style.zIndex = '9999';
-      troubleshootBtn.style.padding = '15px 20px';
-      troubleshootBtn.style.fontSize = '18px';
-      troubleshootBtn.style.backgroundColor = '#e74c3c';
-      troubleshootBtn.style.color = 'white';
-      troubleshootBtn.style.border = 'none';
-      troubleshootBtn.style.borderRadius = '4px';
-      troubleshootBtn.style.cursor = 'pointer';
-      troubleshootBtn.style.boxShadow = '0 4px 8px rgba(0, 0, 0, 0.2)';
-      
-      troubleshootBtn.onclick = function() {
-        // Force select a known good path - this is the default server upload path
-        const uploadsPath = '/uploads';
-        console.log('Setting upload path directly to:', uploadsPath);
-        
-        // Show form immediately
-        document.getElementById('targetPath').value = uploadsPath;
-        document.getElementById('selectedPath').textContent = `Selected: ${uploadsPath}`;
-        document.getElementById('uploadForm').style.display = 'block';
-        document.getElementById('uploadForm').scrollIntoView({ behavior: 'smooth' });
-        
-        // Make a directory check request in the background, but don't wait for it
-        fetch(`/list-folders?path=${encodeURIComponent(uploadsPath)}`)
-          .then(res => res.json())
-          .then(data => {
-            console.log("Directory check result:", data);
-          })
-          .catch(err => {
-            console.error("Error checking directory:", err);
-          });
-      };
-      
-      document.body.appendChild(troubleshootBtn);
     });
 
     // Format bytes to human-readable size
