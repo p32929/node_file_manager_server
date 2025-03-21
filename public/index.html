@@ -2,233 +2,965 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>File Uploader with Progress Tracking</title>
-  <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simple File Server</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
     /* General Styling */
+    :root {
+      --primary: #4361ee;
+      --primary-light: #4895ef;
+      --primary-dark: #3f37c9;
+      --success: #4cc9f0;
+      --warning: #f72585;
+      --gray-light: #f8f9fa;
+      --gray: #e9ecef;
+      --gray-dark: #6c757d;
+      --text: #212529;
+    }
+    
     body {
-      font-family: 'Segoe UI', Arial, sans-serif;
-      background: #f4f4f4;
+      font-family: 'Segoe UI', Roboto, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--gray-light);
       margin: 0;
-      padding: 20px;
-      color: #333;
+      padding: 0;
+      color: var(--text);
+      line-height: 1.6;
     }
 
-    h2 {
-      color: #444;
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    header {
+      background: linear-gradient(135deg, var(--primary), var(--primary-light));
+      color: white;
+      padding: 20px;
       text-align: center;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      border-radius: 0 0 15px 15px;
+      margin-bottom: 30px;
     }
 
-    /* Explorer Styling */
-    #explorer {
-      border: 1px solid #ddd;
-      background: #fff;
-      padding: 20px;
-      max-width: 500px;
-      box-shadow: 0 5px 10px rgba(0, 0, 0, 0.1);
-      border-radius: 10px;
-      margin: auto;
+    h1, h2, h3 {
+      margin: 0;
+      font-weight: 600;
     }
 
-    #pathDisplay {
-      font-weight: bold;
-      margin-bottom: 15px;
-      font-size: 14px;
-      color: #555;
+    header h1 {
+      font-size: 28px;
+      margin-bottom: 5px;
     }
 
-    .folder {
-      padding: 10px;
-      cursor: pointer;
-      border-radius: 5px;
-      transition: background 0.2s;
-      display: flex;
-      align-items: center;
-      gap: 10px;
+    header p {
+      margin: 0;
+      opacity: 0.9;
       font-size: 16px;
     }
 
+    .card {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+      margin-bottom: 20px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .card-header {
+      background: var(--gray);
+      padding: 15px 20px;
+      border-bottom: 1px solid rgba(0,0,0,0.05);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card-header h2 {
+      margin: 0;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .card-body {
+      padding: 20px;
+    }
+
+    /* Explorer Styling */
+    #explorer .breadcrumb {
+      display: flex;
+      padding: 10px 0;
+      margin-bottom: 15px;
+      list-style: none;
+      background-color: rgba(0,0,0,0.02);
+      border-radius: 5px;
+      overflow-x: auto;
+      white-space: nowrap;
+      padding: 10px;
+    }
+
+    #explorer .breadcrumb-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+    }
+
+    #explorer .breadcrumb-item + .breadcrumb-item::before {
+      content: "/";
+      padding: 0 8px;
+      color: var(--gray-dark);
+    }
+
+    #explorer .breadcrumb-item a {
+      color: var(--primary);
+      text-decoration: none;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    #explorer .breadcrumb-item a:hover {
+      text-decoration: underline;
+    }
+
+    #explorer .breadcrumb-item.active {
+      color: var(--gray-dark);
+    }
+
+    .folder-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+      margin-top: 15px;
+    }
+
+    .folder {
+      padding: 12px 16px;
+      cursor: pointer;
+      border-radius: 8px;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-size: 15px;
+      border: 1px solid var(--gray);
+      background: rgba(255,255,255,0.5);
+    }
+
     .folder:hover {
-      background: #e0f2ff;
+      background: var(--gray);
+      transform: translateY(-2px);
+      box-shadow: 0 2px 5px rgba(0,0,0,0.05);
     }
 
     .folder i {
-      color: #007bff;
+      color: var(--primary);
       font-size: 18px;
     }
 
     .buttons {
-      margin-top: 10px;
-      text-align: center;
+      margin-top: 20px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
     }
 
-    .buttons button {
-      margin: 5px;
-      padding: 8px 14px;
+    button {
+      padding: 12px 18px;
       font-size: 14px;
       cursor: pointer;
       border: none;
-      background: #007bff;
+      background: var(--primary);
       color: white;
-      border-radius: 5px;
-      transition: background 0.3s;
+      border-radius: 8px;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 500;
     }
 
-    .buttons button:hover {
-      background: #0056b3;
+    button:hover {
+      background: var(--primary-dark);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    button:disabled {
+      background: var(--gray);
+      color: var(--gray-dark);
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    button:disabled:hover {
+      background: var(--gray);
+      transform: none;
+      box-shadow: none;
+    }
+
+    button.secondary {
+      background: var(--gray);
+      color: var(--text);
+    }
+
+    button.secondary:hover {
+      background: var(--gray-dark);
+      color: white;
+    }
+
+    button.danger {
+      background: var(--warning);
+    }
+
+    button.danger:hover {
+      background: #d31367; /* Darker shade of warning */
+    }
+
+    .button-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+    }
+
+    #cancelButton {
+      display: none;
     }
 
     /* Upload Form */
     #uploadForm {
-      margin-top: 30px;
-      padding: 20px;
-      border: 1px solid #ddd;
-      background: #fff;
-      border-radius: 10px;
-      box-shadow: 0 5px 10px rgba(0, 0, 0, 0.1);
-      max-width: 500px;
-      margin: auto;
+      margin-top: 20px;
+    }
+
+    .file-input-container {
+      position: relative;
+      margin-bottom: 20px;
+    }
+
+    .file-input-container input[type="file"] {
+      position: absolute;
+      left: 0;
+      top: 0;
+      opacity: 0;
+      width: 100%;
+      height: 100%;
+      cursor: pointer;
+    }
+
+    .file-input-button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 30px;
+      border: 2px dashed var(--gray-dark);
+      border-radius: 8px;
+      background: var(--gray-light);
+      text-align: center;
+      color: var(--gray-dark);
+      transition: all 0.3s;
+    }
+
+    .file-input-container:hover .file-input-button {
+      border-color: var(--primary);
+      color: var(--primary);
+      background: rgba(67, 97, 238, 0.05);
+    }
+
+    .file-info {
+      margin-top: 12px;
       display: none;
+      background: var(--gray-light);
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
     }
 
     /* Progress Bar */
     .progress-container {
-      width: 100%;
-      background-color: #ddd;
-      border-radius: 5px;
-      margin-top: 10px;
+      margin-top: 15px;
+      background-color: var(--gray);
+      border-radius: 8px;
+      overflow: hidden;
+      height: 8px;
       display: none;
     }
 
     .progress-bar {
-      height: 12px;
+      height: 100%;
       width: 0%;
-      background: #007bff;
-      border-radius: 5px;
+      background: linear-gradient(90deg, var(--primary), var(--success));
+      border-radius: 8px;
       transition: width 0.3s;
     }
 
     /* Upload Info */
     .upload-info {
-      margin-top: 10px;
+      margin-top: 12px;
       font-size: 14px;
-      color: #555;
+      color: var(--gray-dark);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Modal for How-To Guide */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.4);
+      animation: fadeIn 0.3s;
+      overflow: hidden;
+      justify-content: center;
+      align-items: center;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .modal-content {
+      background-color: white;
+      padding: 0;
+      width: 90%;
+      max-width: 700px;
+      max-height: 75vh;
+      border-radius: 12px;
+      box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+      animation: slideIn 0.3s;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      margin: 0;
+    }
+
+    @keyframes slideIn {
+      from { transform: translateY(-30px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .modal-header {
+      padding: 15px 20px;
+      background: var(--primary);
+      color: white;
+      border-radius: 12px 12px 0 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .modal-header h2 {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .modal-body {
+      padding: 20px;
+      overflow-y: auto;
+      flex-grow: 1;
+    }
+
+    .close {
+      color: white;
+      font-size: 28px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .close:hover {
+      opacity: 0.7;
+    }
+
+    .guide-section {
+      margin-bottom: 25px;
+    }
+
+    .guide-section h3 {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-size: 18px;
+      margin-bottom: 12px;
+      color: var(--primary-dark);
+    }
+
+    .guide-section p {
+      margin: 0 0 10px 0;
+      line-height: 1.6;
+    }
+
+    .guide-steps {
+      padding-left: 30px;
+    }
+
+    .guide-steps li {
+      margin-bottom: 8px;
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 30px 20px;
+      color: var(--gray-dark);
+    }
+
+    .empty-state i {
+      font-size: 40px;
+      margin-bottom: 10px;
+      opacity: 0.5;
+    }
+
+    /* Help button */
+    .help-button {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    .help-button:hover {
+      transform: scale(1.1);
+    }
+
+    /* Toast notification */
+    #toast {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background: #333;
+      color: white;
+      padding: 14px 20px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.3s;
+      z-index: 1000;
+      max-width: 90%;
+    }
+
+    #toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    #toast.success {
+      background: #28a745;
+    }
+
+    #toast.error {
+      background: #dc3545;
+    }
+    
+    #toast.info {
+      background: var(--primary);
+    }
+    
+    #toastMessage {
+      word-break: break-word;
+      flex-grow: 1;
+    }
+
+    /* Responsive design */
+    @media (max-width: 768px) {
+      .folder-list {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      }
+
+      .modal-content {
+        width: 95%;
+        max-height: 80vh;
+      }
+      
+      .modal-body {
+        padding: 15px;
+      }
+      
+      .guide-section h3 {
+        font-size: 16px;
+      }
+      
+      .guide-steps {
+        padding-left: 20px;
+      }
+
+      .buttons {
+        flex-direction: column;
+        width: 100%;
+      }
+
+      button {
+        width: 100%;
+      }
+      
+      .button-group {
+        flex-direction: column;
+      }
+      
+      #toast {
+        left: 50%;
+        transform: translateY(100px) translateX(-50%);
+        width: 90%;
+      }
+      
+      #toast.show {
+        transform: translateY(0) translateX(-50%);
+      }
     }
   </style>
 </head>
 <body>
+  <header>
+    <h1><i class="fas fa-cloud-upload-alt"></i> Simple File Server</h1>
+    <p>Upload files to any folder on your server with ease</p>
+  </header>
 
-  <h2><i class="fas fa-folder-open"></i> Select a Folder to Upload Into</h2>
+  <div class="container">
+    <div class="card" id="explorer">
+      <div class="card-header">
+        <h2><i class="fas fa-folder"></i> File Explorer</h2>
+        <button class="secondary" onclick="showHowTo()"><i class="fas fa-question-circle"></i> Help</button>
+      </div>
+      <div class="card-body">
+        <nav aria-label="breadcrumb">
+          <ol class="breadcrumb" id="breadcrumb">
+            <li class="breadcrumb-item active"><i class="fas fa-home"></i> Root</li>
+          </ol>
+        </nav>
+        
+        <div id="folders" class="folder-list">Loading folders...</div>
+        
+        <div class="buttons">
+          <button onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
+          <button onclick="goUp()"><i class="fas fa-arrow-up"></i> Go Up</button>
+          <button onclick="selectFolder()"><i class="fas fa-check-circle"></i> Select This Folder</button>
+        </div>
+      </div>
+    </div>
 
-  <div id="explorer">
-    <div id="pathDisplay">Loading...</div>
-    <div id="folders">Loading folders...</div>
-    <div class="buttons">
-      <button onclick="goUp()"><i class="fas fa-arrow-up"></i> Go Up</button>
-      <button onclick="selectFolder()"><i class="fas fa-check"></i> Select This Folder</button>
+    <div class="card" id="uploadForm" style="display: none;">
+      <div class="card-header">
+        <h2><i class="fas fa-upload"></i> Upload File</h2>
+        <div id="selectedPath">No folder selected</div>
+      </div>
+      <div class="card-body">
+        <div class="file-input-container">
+          <div class="file-input-button">
+            <i class="fas fa-file-upload fa-2x"></i>
+            <div>
+              <p>Drop your file here or click to browse</p>
+              <p style="font-size: 12px; margin-top: 5px; opacity: 0.7;">Drag and drop files or click to select</p>
+            </div>
+          </div>
+          <input type="file" id="fileInput" onchange="updateFileInfo()">
+        </div>
+
+        <div class="file-info" id="fileInfo">
+          <i class="fas fa-file"></i> <span id="fileName"></span> (<span id="fileSize"></span>)
+        </div>
+
+        <input type="hidden" name="targetPath" id="targetPath">
+        <div class="button-group">
+          <button type="button" id="uploadButton" onclick="uploadFile()"><i class="fas fa-cloud-upload-alt"></i> Upload File</button>
+          <button type="button" id="cancelButton" class="danger" onclick="cancelUpload()"><i class="fas fa-times-circle"></i> Cancel Upload</button>
+        </div>
+
+        <div class="progress-container">
+          <div class="progress-bar"></div>
+        </div>
+
+        <div class="upload-info" id="uploadInfo"></div>
+      </div>
     </div>
   </div>
 
-  <form id="uploadForm" method="POST" enctype="multipart/form-data">
-    <h2><i class="fas fa-upload"></i> Upload File</h2>
-    <input type="file" id="fileInput" required><br><br>
-    <input type="hidden" name="targetPath" id="targetPath">
-    <button type="button" id="uploadButton" onclick="uploadFile()"><i class="fas fa-cloud-upload-alt"></i> Upload</button>
+  <!-- How-To Guide Modal -->
+  <div id="howToModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2><i class="fas fa-book"></i> How to Use the File Server</h2>
+        <span class="close" onclick="closeHowTo()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div class="guide-section">
+          <h3><i class="fas fa-compass"></i> Navigation</h3>
+          <p>Navigate through folders to find the right location for your file:</p>
+          <ol class="guide-steps">
+            <li>Use the <strong>File Explorer</strong> to browse through folders</li>
+            <li>Click on any folder to navigate into it</li>
+            <li>Use the <strong>Back</strong> button to return to the previous folder</li>
+            <li>Use the <strong>Go Up</strong> button to navigate to the parent folder</li>
+            <li>The path display at the top shows your current location</li>
+          </ol>
+        </div>
 
-    <div class="progress-container">
-      <div class="progress-bar"></div>
+        <div class="guide-section">
+          <h3><i class="fas fa-upload"></i> Uploading Files</h3>
+          <p>Upload your files in just a few steps:</p>
+          <ol class="guide-steps">
+            <li>Navigate to the folder where you want to upload your file</li>
+            <li>Click <strong>Select This Folder</strong> to target this location</li>
+            <li>The upload form will appear below</li>
+            <li>Click on the upload area or drag & drop your file</li>
+            <li>Click the <strong>Upload File</strong> button to start the upload</li>
+            <li>You'll see a progress bar showing upload status</li>
+          </ol>
+        </div>
+
+        <div class="guide-section">
+          <h3><i class="fas fa-tachometer-alt"></i> Progress Tracking</h3>
+          <p>Track your upload progress in real-time:</p>
+          <ul class="guide-steps">
+            <li>The progress bar shows the percentage of completion</li>
+            <li>You'll see the upload speed (KB/s, MB/s)</li>
+            <li>Remaining file size and time estimate is displayed</li>
+            <li>A notification will appear when the upload completes</li>
+          </ul>
+        </div>
+
+        <div class="guide-section">
+          <h3><i class="fas fa-lightbulb"></i> Tips</h3>
+          <ul class="guide-steps">
+            <li>You can access this guide anytime by clicking the Help button</li>
+            <li>For large files, keep the browser window open until upload completes</li>
+            <li>The breadcrumb navigation allows quick jumps between folders</li>
+          </ul>
+        </div>
+      </div>
     </div>
+  </div>
 
-    <div class="upload-info" id="uploadInfo"></div>
-  </form>
+  <!-- Help Button -->
+  <div class="help-button" onclick="showHowTo()">
+    <i class="fas fa-question"></i>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast">
+    <i class="fas fa-check-circle"></i>
+    <span id="toastMessage"></span>
+  </div>
 
   <script>
     let currentPath = '/';
+    // Track navigation history for back button
+    let navigationHistory = [];
 
-    function fetchFolders(dirPath = '/') {
-      document.getElementById('folders').innerHTML = 'Loading...';
+    function fetchFolders(dirPath = '/', addToHistory = true) {
+      document.getElementById('folders').innerHTML = '<div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Loading folders...</p></div>';
+
+      // Add current path to history before navigating to new path
+      if (addToHistory && currentPath !== dirPath) {
+        navigationHistory.push(currentPath);
+      }
 
       fetch(`/list-folders?path=${encodeURIComponent(dirPath)}`)
         .then(res => res.json())
         .then(data => {
           if (data.error) {
-            document.getElementById('folders').innerHTML = `<p style="color:red;">⚠ Error loading: ${data.error}</p>`;
+            document.getElementById('folders').innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-triangle"></i><p>Error: ${data.error}</p></div>`;
             return;
           }
 
           currentPath = data.path;
-          document.getElementById('pathDisplay').textContent = `Current Folder: ${currentPath}`;
+          
+          // If we're at the Windows root, fetch and display drives
+          if (data.isRoot) {
+            fetchDrives();
+            return;
+          }
+          
+          updateBreadcrumb(currentPath);
           const foldersDiv = document.getElementById('folders');
           foldersDiv.innerHTML = '';
 
           if (data.folders.length === 0) {
-            foldersDiv.textContent = '(No subfolders found)';
+            foldersDiv.innerHTML = `<div class="empty-state"><i class="fas fa-folder-open"></i><p>No subfolders found</p><small>This folder is empty</small></div>`;
           } else {
             data.folders.forEach(name => {
               const div = document.createElement('div');
               div.className = 'folder';
               div.innerHTML = `<i class="fas fa-folder"></i> <span>${name}</span>`;
-              div.onclick = () => fetchFolders(`${currentPath}/${name}`);
+              div.onclick = () => fetchFolders(`${currentPath === '/' ? '' : currentPath}/${name}`);
               foldersDiv.appendChild(div);
             });
           }
         })
         .catch(err => {
-          document.getElementById('folders').innerHTML = `<p style="color:red;">⚠ Failed to load folders.</p>`;
+          document.getElementById('folders').innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>Failed to load folders</p><small>Please try again</small></div>`;
+        });
+    }
+    
+    function fetchDrives() {
+      fetch('/list-drives')
+        .then(res => res.json())
+        .then(data => {
+          if (data.error) {
+            document.getElementById('folders').innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-triangle"></i><p>Error: ${data.error}</p></div>`;
+            return;
+          }
+          
+          currentPath = '/';
+          updateBreadcrumb(currentPath, true);
+          
+          const foldersDiv = document.getElementById('folders');
+          foldersDiv.innerHTML = '';
+          
+          if (data.drives && data.drives.length > 0) {
+            data.drives.forEach(drive => {
+              const div = document.createElement('div');
+              div.className = 'folder';
+              div.innerHTML = `<i class="fas fa-hdd"></i> <span>${drive}</span>`;
+              div.onclick = () => fetchFolders(drive);
+              foldersDiv.appendChild(div);
+            });
+          } else {
+            foldersDiv.innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>No drives found</p></div>`;
+          }
+        })
+        .catch(err => {
+          document.getElementById('folders').innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>Failed to load drives</p><small>Please try again</small></div>`;
         });
     }
 
+    function updateBreadcrumb(path, isRoot = false) {
+      const breadcrumb = document.getElementById('breadcrumb');
+      breadcrumb.innerHTML = ''; // Clear all breadcrumbs
+      
+      let displayPath;
+      
+      if (isRoot) {
+        // For Windows root (My Computer)
+        const li = document.createElement('li');
+        li.className = 'breadcrumb-item active';
+        li.innerHTML = '<i class="fas fa-desktop"></i> My Computer';
+        breadcrumb.appendChild(li);
+        return;
+      }
+      
+      // Handle drive paths or regular paths
+      if (path.match(/^[A-Z]:\\/i)) {
+        // Windows drive path
+        displayPath = path;
+      } else {
+        // Unix-style path
+        displayPath = path === '/' ? 'Root' : path;
+      }
+      
+      const li = document.createElement('li');
+      li.className = 'breadcrumb-item active';
+      li.innerHTML = path === '/' ? '<i class="fas fa-home"></i> Root' : displayPath;
+      breadcrumb.appendChild(li);
+    }
+
+    function goBack() {
+      if (navigationHistory.length === 0) {
+        showToast('No previous folder to go back to', 'info');
+        return;
+      }
+      
+      const previousPath = navigationHistory.pop();
+      fetchFolders(previousPath, false); // Don't add to history when going back
+    }
+
     function goUp() {
-      const parts = currentPath.split('/');
+      if (currentPath === '/') {
+        // Already at root, do nothing or show a message
+        showToast('Already at the root level', 'info');
+        return;
+      }
+      
+      const parts = currentPath.split(/[\/\\]/).filter(part => part);
+      
+      // Handle Windows drive paths (C:\)
+      if (parts.length === 1 && parts[0].endsWith(':')) {
+        fetchFolders('/'); // Go to drives list
+        return;
+      }
+      
       parts.pop();
-      fetchFolders(parts.join('/') || '/');
+      
+      // If we've gone up to a drive root (like C:\)
+      if (parts.length === 1 && parts[0].endsWith(':')) {
+        fetchFolders(parts[0] + '\\');
+        return;
+      }
+      
+      fetchFolders('/' + parts.join('/'));
     }
 
     function selectFolder() {
       document.getElementById('targetPath').value = currentPath;
+      document.getElementById('selectedPath').textContent = `Selected: ${currentPath}`;
       document.getElementById('uploadForm').style.display = 'block';
+      
+      // Scroll to the upload form
+      document.getElementById('uploadForm').scrollIntoView({ behavior: 'smooth' });
+      
+      showToast('Folder selected! You can now upload files.', 'success');
     }
 
+    function updateFileInfo() {
+      const file = document.getElementById('fileInput').files[0];
+      if (file) {
+        document.getElementById('fileInfo').style.display = 'block';
+        document.getElementById('fileName').textContent = file.name;
+        document.getElementById('fileSize').textContent = formatSize(file.size);
+        
+        // Change icon based on file type
+        const fileIcon = document.querySelector('#fileInfo i');
+        const fileExtension = file.name.split('.').pop().toLowerCase();
+        
+        if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(fileExtension)) {
+          fileIcon.className = 'fas fa-file-image';
+        } else if (['pdf'].includes(fileExtension)) {
+          fileIcon.className = 'fas fa-file-pdf';
+        } else if (['doc', 'docx'].includes(fileExtension)) {
+          fileIcon.className = 'fas fa-file-word';
+        } else if (['xls', 'xlsx', 'csv'].includes(fileExtension)) {
+          fileIcon.className = 'fas fa-file-excel';
+        } else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(fileExtension)) {
+          fileIcon.className = 'fas fa-file-archive';
+        } else if (['mp4', 'avi', 'mov', 'wmv'].includes(fileExtension)) {
+          fileIcon.className = 'fas fa-file-video';
+        } else if (['mp3', 'wav', 'ogg'].includes(fileExtension)) {
+          fileIcon.className = 'fas fa-file-audio';
+        } else if (['html', 'css', 'js', 'php', 'py', 'java', 'c', 'cpp'].includes(fileExtension)) {
+          fileIcon.className = 'fas fa-file-code';
+        } else {
+          fileIcon.className = 'fas fa-file';
+        }
+      }
+    }
+
+    let xhr; // Global variable for XMLHttpRequest
+    
     function uploadFile() {
       const file = document.getElementById('fileInput').files[0];
-      if (!file) return alert('Select a file first!');
+      if (!file) {
+        showToast('Please select a file first!', 'error');
+        return;
+      }
 
+      // Disable upload button and show cancel button
       document.getElementById('uploadButton').disabled = true;
+      document.getElementById('uploadButton').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
+      document.getElementById('cancelButton').style.display = 'flex';
       
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('targetPath', currentPath);
+      formData.append('targetPath', document.getElementById('targetPath').value);
 
-      const xhr = new XMLHttpRequest();
+      xhr = new XMLHttpRequest();
       xhr.open('POST', '/upload', true);
 
       let startTime = Date.now();
+      let lastLoaded = 0;
+      let speedArray = [];
 
       xhr.upload.onprogress = function (event) {
         let percent = Math.round((event.loaded / event.total) * 100);
         let elapsedTime = (Date.now() - startTime) / 1000;
-        let speed = event.loaded / elapsedTime;
+        
+        // Calculate average speed over last few seconds
+        let currentSpeed = (event.loaded - lastLoaded) / (elapsedTime > 0 ? elapsedTime : 0.1);
+        lastLoaded = event.loaded;
+        startTime = Date.now();
+        
+        speedArray.push(currentSpeed);
+        if (speedArray.length > 5) speedArray.shift(); // Keep last 5 readings
+        
+        let avgSpeed = speedArray.reduce((a, b) => a + b, 0) / speedArray.length;
         let remainingSize = event.total - event.loaded;
-
-        let speedText = formatSize(speed) + '/s';
-        let remainingText = formatSize(remainingSize) + ' left';
+        let estimatedTimeLeft = remainingSize / (avgSpeed > 0 ? avgSpeed : 0.1);
+        
+        let speedText = formatSize(avgSpeed) + '/s';
+        let remainingText = formatSize(remainingSize);
+        let timeText = formatTime(estimatedTimeLeft);
 
         document.querySelector('.progress-container').style.display = 'block';
         document.querySelector('.progress-bar').style.width = percent + '%';
         document.getElementById('uploadInfo').innerHTML = 
-          `Uploading: ${percent}% (${speedText}) - ${remainingText}`;
+          `<i class="fas fa-info-circle"></i> ${percent}% complete • ${speedText} • ${remainingText} remaining • ETA: ${timeText}`;
       };
 
       xhr.onload = function () {
-        document.getElementById('uploadButton').disabled = false;
+        resetUploadUI();
+        
         if (xhr.status === 200) {
-          alert('Upload Successful');
+          showToast('Upload completed successfully!', 'success');
+          // Reset form
+          document.getElementById('fileInput').value = '';
+          document.getElementById('fileInfo').style.display = 'none';
+          document.querySelector('.progress-container').style.display = 'none';
+          document.getElementById('uploadInfo').innerHTML = '';
         } else {
-          alert('Upload failed.');
+          showToast('Upload failed. Please try again.', 'error');
         }
       };
 
+      xhr.onerror = function() {
+        resetUploadUI();
+        showToast('Connection error. Please try again.', 'error');
+      };
+
+      xhr.onabort = function() {
+        resetUploadUI();
+        showToast('Upload cancelled.', 'error');
+        document.querySelector('.progress-container').style.display = 'none';
+        document.getElementById('uploadInfo').innerHTML = '';
+      };
+
       xhr.send(formData);
+    }
+
+    function cancelUpload() {
+      if (xhr && xhr.readyState !== 4) {
+        xhr.abort();
+      }
+    }
+
+    function resetUploadUI() {
+      document.getElementById('uploadButton').disabled = false;
+      document.getElementById('uploadButton').innerHTML = '<i class="fas fa-cloud-upload-alt"></i> Upload File';
+      document.getElementById('cancelButton').style.display = 'none';
     }
 
     function formatSize(bytes) {
@@ -238,8 +970,101 @@
       return bytes + ' B';
     }
 
-    window.onload = () => fetchFolders('/');
-  </script>
+    function formatTime(seconds) {
+      if (isNaN(seconds) || !isFinite(seconds)) return 'calculating...';
+      if (seconds < 60) return Math.ceil(seconds) + ' sec';
+      if (seconds < 3600) return Math.floor(seconds / 60) + ' min ' + Math.ceil(seconds % 60) + ' sec';
+      return Math.floor(seconds / 3600) + ' hr ' + Math.floor((seconds % 3600) / 60) + ' min';
+    }
 
+    function showHowTo() {
+      const modal = document.getElementById('howToModal');
+      modal.style.display = 'flex';
+      document.body.style.overflow = 'hidden'; // Prevent scrolling behind modal
+    }
+
+    function closeHowTo() {
+      document.getElementById('howToModal').style.display = 'none';
+      document.body.style.overflow = ''; // Restore scrolling
+    }
+
+    function showToast(message, type = '') {
+      const toast = document.getElementById('toast');
+      const toastMessage = document.getElementById('toastMessage');
+      const icon = toast.querySelector('i');
+      
+      // Update icon based on message type
+      if (type === 'success') {
+        icon.className = 'fas fa-check-circle';
+      } else if (type === 'error') {
+        icon.className = 'fas fa-times-circle';
+      } else if (type === 'info') {
+        icon.className = 'fas fa-info-circle';
+      } else {
+        icon.className = 'fas fa-bell';
+      }
+      
+      toast.className = type ? `show ${type}` : 'show';
+      toastMessage.textContent = message;
+      
+      setTimeout(function(){ 
+        toast.className = toast.className.replace("show", ""); 
+      }, 3000);
+    }
+
+    // Event listeners
+    window.onclick = function(event) {
+      const modal = document.getElementById('howToModal');
+      if (event.target === modal) {
+        closeHowTo();
+      }
+    }
+
+    // Support for drag & drop
+    const dropArea = document.querySelector('.file-input-container');
+    
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+      dropArea.addEventListener(eventName, preventDefaults, false);
+    });
+    
+    function preventDefaults(e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropArea.addEventListener(eventName, highlight, false);
+    });
+    
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropArea.addEventListener(eventName, unhighlight, false);
+    });
+    
+    function highlight() {
+      dropArea.querySelector('.file-input-button').style.borderColor = 'var(--primary)';
+      dropArea.querySelector('.file-input-button').style.backgroundColor = 'rgba(67, 97, 238, 0.05)';
+    }
+    
+    function unhighlight() {
+      dropArea.querySelector('.file-input-button').style.borderColor = 'var(--gray-dark)';
+      dropArea.querySelector('.file-input-button').style.backgroundColor = 'var(--gray-light)';
+    }
+    
+    dropArea.addEventListener('drop', handleDrop, false);
+    
+    function handleDrop(e) {
+      const dt = e.dataTransfer;
+      const files = dt.files;
+      document.getElementById('fileInput').files = files;
+      updateFileInfo();
+    }
+
+    // Show how-to guide on first visit
+    window.onload = () => {
+      fetchFolders('/');
+      
+      // Removed auto-display of help dialog
+    };
+  </script>
 </body>
 </html>

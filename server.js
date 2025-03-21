@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { parse } = require('url');
+const { exec } = require('child_process');
 
 const server = http.createServer((req, res) => {
   const { pathname, query } = parse(req.url, true);
@@ -15,8 +16,44 @@ const server = http.createServer((req, res) => {
     });
   }
 
+  else if (method === 'GET' && pathname === '/list-drives') {
+    // Only for Windows systems
+    if (process.platform === 'win32') {
+      exec('wmic logicaldisk get name', (error, stdout) => {
+        if (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: error.message }));
+        }
+        
+        // Parse the output to get drive letters
+        const drives = stdout.split('\r\r\n')
+          .map(line => line.trim())
+          .filter(line => /^[A-Za-z]:$/.test(line))
+          .map(drive => drive + '\\');
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ drives }));
+      });
+    } else {
+      // For non-Windows systems, just return root
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ drives: ['/'] }));
+    }
+  }
+
   else if (method === 'GET' && pathname === '/list-folders') {
     let currentPath = query.path || '/';
+    
+    // If we're at the root on Windows, redirect to the drive list
+    if ((currentPath === '/' || currentPath === '\\') && process.platform === 'win32') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ 
+        path: '/', 
+        folders: [],
+        isRoot: true
+      }));
+    }
+    
     try {
       currentPath = path.resolve(currentPath); // clean path
       const entries = fs.readdirSync(currentPath, { withFileTypes: true });
