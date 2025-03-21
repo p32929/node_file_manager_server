@@ -319,22 +319,28 @@ const server = http.createServer((req, res) => {
           
           // Check if all chunks have been received
           if (upload.receivedChunks.size === upload.totalChunks) {
-            // Close the file stream
-            upload.writeStream.end(() => {
-              console.log(`Upload complete: ${fileName} (${fileId})`);
+            // Close the file stream but wait for 'finish' event
+            console.log(`File upload almost complete: ${fileName} (${fileId}), finalizing at: ${upload.finalPath}`);
+            
+            // End the write stream but wait for it to finish before cleaning up
+            upload.writeStream.end();
+            upload.writeStream.on('finish', () => {
+              console.log(`File write stream finished: ${fileName} (${fileId}) at ${upload.finalPath}`);
+              console.log(`File exists check: ${fs.existsSync(upload.finalPath)}`);
+              console.log(`File size: ${fs.existsSync(upload.finalPath) ? fs.statSync(upload.finalPath).size : 'N/A'} bytes`);
+              
+              // Clean up only after we're sure the file is written
+              clearTimeout(upload.timeout);
+              uploadTracker.delete(fileId);
+              
+              // Clean up temp directory
+              try {
+                removeDirectory(tempDir);
+                console.log(`Cleaned up temporary directory: ${tempDir}`);
+              } catch (cleanupError) {
+                console.error('Error cleaning up temp files:', cleanupError);
+              }
             });
-            
-            // Clear the timeout and remove from tracker
-            clearTimeout(upload.timeout);
-            uploadTracker.delete(fileId);
-            
-            // Clean up temp directory
-            try {
-              removeDirectory(tempDir);
-              console.log(`Cleaned up temporary directory: ${tempDir}`);
-            } catch (cleanupError) {
-              console.error('Error cleaning up temp files:', cleanupError);
-            }
             
             // Send success response
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -752,7 +758,20 @@ setInterval(() => {
 
 // Helper function to get current path
 function getCurrentPath() {
-  return process.cwd();
+  // Always use the base path where the server is running
+  // This ensures files are saved in a predictable location
+  const basePath = process.cwd();
+  
+  // Default to an 'uploads' folder within the server directory for better organization
+  const uploadPath = path.join(basePath, 'uploads');
+  
+  // Ensure the path exists
+  if (!fs.existsSync(uploadPath)) {
+    fs.mkdirSync(uploadPath, { recursive: true });
+  }
+  
+  console.log(`Current upload path: ${uploadPath}`);
+  return uploadPath;
 }
 
 // Helper function to recursively remove directory using only fs module

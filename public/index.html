@@ -587,6 +587,25 @@
         transform: translateY(0) translateX(-50%);
       }
     }
+
+    .file-path {
+      word-break: break-all;
+      display: inline-block;
+      font-family: monospace;
+      background: rgba(0,0,0,0.05);
+      padding: 2px 5px;
+      border-radius: 3px;
+      margin-top: 5px;
+    }
+    
+    .toast {
+      max-width: 80%;
+      word-break: break-word;
+    }
+    
+    .toast.success {
+      max-width: 100%;
+    }
   </style>
 </head>
 <body>
@@ -1124,13 +1143,25 @@
             // Check if we're done with all chunks
             if (currentChunk >= totalChunks - 1) {
               // We're done!
-              showToast('Upload complete!', 'success');
+              // Check if there's a filePath in the response and show it
+              if (response.filePath) {
+                console.log('File saved at:', response.filePath);
+                showToast(`Upload complete! File saved at: ${response.filePath}`, 'success', 10000);
+              } else {
+                showToast('Upload complete!', 'success');
+              }
+              
               isUploading = false;
               
               // Update the UI
               document.querySelector('.progress-bar').style.width = '100%';
               document.getElementById('uploadInfo').innerHTML = 
                 `<i class="fas fa-check-circle"></i> Upload complete! ${formatSize(file.size)} uploaded successfully.`;
+              
+              if (response.filePath) {
+                document.getElementById('uploadInfo').innerHTML += 
+                  `<br><i class="fas fa-save"></i> Saved at: <span class="file-path">${response.filePath}</span>`;
+              }
               
               // Reenable the upload button
               updateUploadButtonState(false);
@@ -1364,6 +1395,10 @@
       // Set class for styling
       toast.className = type ? `show ${type}` : 'show';
       
+      // For longer messages, ensure enough time to read
+      const minDuration = Math.max(2000, message.length * 50);
+      let actualDuration = Math.max(duration, minDuration);
+      
       // Add error details if provided
       if (details && type === 'error') {
         errorDetails.textContent = typeof details === 'object' ? 
@@ -1387,13 +1422,13 @@
         toastActions.appendChild(copyButton);
         
         // Longer duration for errors with details
-        duration = 15000;
+        actualDuration = Math.max(actualDuration, 15000);
       }
       
       // Hide after duration
       setTimeout(function(){ 
         toast.className = toast.className.replace("show", ""); 
-      }, duration);
+      }, actualDuration);
     }
 
     // Event listeners
@@ -1499,7 +1534,7 @@
       const icon = toast.querySelector('i');
       
       icon.className = 'fas fa-exclamation-circle';
-      toast.className = 'show info';
+      toast.className = toast.className.replace("show", "");
       
       // Create resume button inside toast
       toastMessage.innerHTML = `<div>Unfinished upload found: ${fileName} (${progress}% complete)</div>
