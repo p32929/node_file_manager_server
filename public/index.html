@@ -875,23 +875,60 @@
     let chunkUploadAborted = false; // Flag to track if upload was aborted
     let currentChunk = 0; // Current chunk being uploaded
     let totalChunks = 0; // Total number of chunks for current upload
-    const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks (increased from 1MB)
+    let lastVisibilityNotification = 0; // Track when last notification was shown
     
     // Page visibility handling
     document.addEventListener('visibilitychange', handleVisibilityChange);
     
+    // Track throttling state
+    let isThrottled = false;
+    let lastUploadTime = 0;
+    const THROTTLE_THRESHOLD = 1000; // ms
+    
     function handleVisibilityChange() {
+      if (!isUploading) return;
+      
       if (document.hidden) {
-        // Page is now hidden (user switched tabs)
-        if (isUploading) {
-          showToast('Upload continues in background. Please don\'t close this tab.', 'info');
-        }
+        // Optimize background uploads by reducing UI updates
+        isThrottled = true;
       } else {
-        // Page is now visible again
-        if (isUploading) {
-          showToast('Upload continuing in foreground', 'info');
-        }
+        // Resume normal operation when tab is visible again
+        isThrottled = false;
+        
+        // Refresh progress UI when coming back to tab
+        updateUploadProgressUI();
       }
+    }
+    
+    // Separate function to update UI for better performance
+    function updateUploadProgressUI() {
+      if (!isUploading) return;
+      
+      // Get the current progress data
+      const file = document.getElementById('fileInput').files[0];
+      const previousChunksBytes = currentChunk * CHUNK_SIZE;
+      const totalUploadedBytes = previousChunksBytes;
+      const overallPercent = Math.round((totalUploadedBytes / file.size) * 100);
+      
+      // Calculate elapsed time and speed
+      const elapsedTime = (Date.now() - uploadStartTime) / 1000; // seconds
+      const bytesPerSecond = uploadedBytes / elapsedTime;
+      
+      // Remaining calculations
+      const remainingSize = file.size - totalUploadedBytes;
+      const estimatedTimeLeft = remainingSize / (bytesPerSecond > 0 ? bytesPerSecond : 0.1);
+      
+      // Format values for display
+      const speedText = formatSize(bytesPerSecond) + '/s';
+      const remainingText = formatSize(remainingSize);
+      const timeText = formatTime(estimatedTimeLeft);
+      const chunkText = `Chunk ${currentChunk + 1}/${totalChunks}`;
+      
+      // Update UI
+      document.querySelector('.progress-bar').style.width = overallPercent + '%';
+      document.getElementById('uploadInfo').innerHTML = 
+        `<i class="fas fa-info-circle"></i> ${overallPercent}% complete • ${chunkText} • ${speedText} • ${remainingText} remaining • ETA: ${timeText}`;
     }
     
     function uploadFile() {
@@ -906,6 +943,13 @@
       totalChunks = Math.ceil(file.size / CHUNK_SIZE);
       chunkUploadAborted = false;
       isUploading = true;
+      isThrottled = document.hidden; // Start throttled if in background
+      lastUploadTime = 0;
+      
+      // For very large files, show a warning
+      if (file.size > 100 * 1024 * 1024) { // 100MB
+        showToast('Large file detected. Upload will continue in the background.', 'info');
+      }
 
       // Disable upload button and show cancel button
       document.getElementById('uploadButton').disabled = true;
@@ -916,7 +960,11 @@
       document.querySelector('.progress-container').style.display = 'block';
       document.querySelector('.progress-bar').style.width = '0%';
       document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-info-circle"></i> Preparing to upload...`;
+        `<i class="fas fa-info-circle"></i> Preparing to upload ${formatSize(file.size)}...`;
+      
+      // Global variables for tracking upload
+      uploadStartTime = Date.now();
+      uploadedBytes = 0;
       
       // Start uploading the first chunk
       uploadNextChunk(file);
@@ -945,9 +993,7 @@
       const start = currentChunk * CHUNK_SIZE;
       const end = Math.min(file.size, start + CHUNK_SIZE);
       const chunk = file.slice(start, end);
-      
-      // Create FormData (can't use this with our custom headers)
-      // Instead, we'll send the raw chunk
+      const chunkSize = end - start;
       
       // Send the chunk
       xhr = new XMLHttpRequest();
@@ -959,59 +1005,73 @@
       xhr.setRequestHeader('X-Total-Chunks', totalChunks.toString());
       xhr.setRequestHeader('X-File-Path', document.getElementById('targetPath').value);
       
-      // Track timing and progress
-      let chunkStartTime = Date.now();
-      let lastLoaded = 0;
-      let speedArray = [];
-      
       xhr.upload.onprogress = function(event) {
-        // Calculate progress across all chunks
-        const overallLoaded = currentChunk * CHUNK_SIZE + event.loaded;
-        const overallTotal = file.size;
-        const percent = Math.round((overallLoaded / overallTotal) * 100);
-        
-        // Calculate speed
-        let elapsedTime = (Date.now() - chunkStartTime) / 1000;
-        let currentSpeed = (event.loaded - lastLoaded) / (elapsedTime > 0 ? elapsedTime : 0.1);
-        lastLoaded = event.loaded;
-        chunkStartTime = Date.now();
-        
-        // Maintain speed history for average
-        speedArray.push(currentSpeed);
-        if (speedArray.length > 5) speedArray.shift();
-        let avgSpeed = speedArray.reduce((a, b) => a + b, 0) / speedArray.length;
-        
-        // Calculate remaining time
-        let remainingSize = overallTotal - overallLoaded;
-        let estimatedTimeLeft = remainingSize / (avgSpeed > 0 ? avgSpeed : 0.1);
-        
-        // Format values for display
-        let speedText = formatSize(avgSpeed) + '/s';
-        let remainingText = formatSize(remainingSize);
-        let timeText = formatTime(estimatedTimeLeft);
-        let chunkText = `Chunk ${currentChunk + 1}/${totalChunks}`;
-        
-        // Update UI
-        document.querySelector('.progress-bar').style.width = percent + '%';
-        document.getElementById('uploadInfo').innerHTML = 
-          `<i class="fas fa-info-circle"></i> ${percent}% complete • ${chunkText} • ${speedText} • ${remainingText} remaining • ETA: ${timeText}`;
+        // Only update UI if not throttled or enough time has passed
+        const now = Date.now();
+        if (!isThrottled || (now - lastUploadTime > THROTTLE_THRESHOLD)) {
+          lastUploadTime = now;
+          
+          // Calculate progress for current chunk
+          const chunkProgress = event.loaded / event.total;
+          
+          // Calculate overall progress
+          const previousChunksBytes = currentChunk * CHUNK_SIZE;
+          const currentChunkBytes = chunkProgress * chunkSize;
+          const totalUploadedBytes = previousChunksBytes + currentChunkBytes;
+          const overallPercent = Math.round((totalUploadedBytes / file.size) * 100);
+          
+          // Update uploadedBytes for speed calculation
+          uploadedBytes = totalUploadedBytes;
+          
+          // Calculate elapsed time and speed
+          const elapsedTime = (Date.now() - uploadStartTime) / 1000; // seconds
+          const bytesPerSecond = uploadedBytes / elapsedTime;
+          
+          // Remaining calculations
+          const remainingSize = file.size - totalUploadedBytes;
+          const estimatedTimeLeft = remainingSize / (bytesPerSecond > 0 ? bytesPerSecond : 0.1);
+          
+          // Format values for display
+          const speedText = formatSize(bytesPerSecond) + '/s';
+          const remainingText = formatSize(remainingSize);
+          const timeText = formatTime(estimatedTimeLeft);
+          const chunkText = `Chunk ${currentChunk + 1}/${totalChunks}`;
+          
+          // Update UI only if not throttled (tab is visible)
+          if (!isThrottled) {
+            document.querySelector('.progress-bar').style.width = overallPercent + '%';
+            document.getElementById('uploadInfo').innerHTML = 
+              `<i class="fas fa-info-circle"></i> ${overallPercent}% complete • ${chunkText} • ${speedText} • ${remainingText} remaining • ETA: ${timeText}`;
+          }
+        }
       };
       
       xhr.onload = function() {
         if (xhr.status === 200) {
+          // Update UI for completed chunk
+          if (!isThrottled) {
+            updateUploadProgressUI();
+          }
+          
           // Chunk uploaded successfully
           currentChunk++;
           
-          // Small delay before next chunk to allow UI to update
-          setTimeout(() => uploadNextChunk(file), 100);
+          // Move to next chunk immediately to maximize bandwidth usage
+          // Don't delay when in background
+          uploadNextChunk(file);
         } else {
           handleUploadError('Chunk upload failed: ' + xhr.responseText);
         }
       };
       
       xhr.onerror = function() {
-        // Check if we should retry this chunk
-        handleUploadError('Connection error during upload');
+        // Retry on failure if not aborted
+        if (!chunkUploadAborted) {
+          console.log(`Retrying chunk ${currentChunk + 1} after error...`);
+          setTimeout(() => uploadNextChunk(file), 1000); // Retry after 1 second
+        } else {
+          handleUploadError('Connection error during upload. Please try again.');
+        }
       };
       
       xhr.onabort = function() {
@@ -1025,6 +1085,17 @@
       
       // Send the chunk data
       xhr.send(chunk);
+    }
+    
+    function formatTime(seconds) {
+      if (!isFinite(seconds) || seconds < 0) return 'calculating...';
+      if (seconds < 60) return Math.round(seconds) + ' sec';
+      
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return minutes + ' min ' + Math.round(seconds % 60) + ' sec';
+      
+      const hours = Math.floor(minutes / 60);
+      return hours + ' hr ' + (minutes % 60) + ' min';
     }
     
     function handleUploadError(message) {
@@ -1052,13 +1123,6 @@
       if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' MB';
       if (bytes >= 1024) return (bytes / 1024).toFixed(2) + ' KB';
       return bytes + ' B';
-    }
-
-    function formatTime(seconds) {
-      if (isNaN(seconds) || !isFinite(seconds)) return 'calculating...';
-      if (seconds < 60) return Math.ceil(seconds) + ' sec';
-      if (seconds < 3600) return Math.floor(seconds / 60) + ' min ' + Math.ceil(seconds % 60) + ' sec';
-      return Math.floor(seconds / 3600) + ' hr ' + Math.floor((seconds % 3600) / 60) + ' min';
     }
 
     function showHowTo() {

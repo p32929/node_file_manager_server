@@ -11,6 +11,13 @@ if (!fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
 
+// Track uploads in memory to improve performance
+const uploadTracker = new Map();
+
+// Performance settings
+const HIGH_WATER_MARK = 1024 * 1024; // 1MB buffer for write streams
+const UPLOAD_TIMEOUT = 24 * 60 * 60 * 1000; // 24 hours timeout for uploads
+
 const server = http.createServer((req, res) => {
   // Set CORS headers for cross-tab uploads
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -94,6 +101,7 @@ const server = http.createServer((req, res) => {
   // New endpoint for chunk uploads
   else if (req.method === 'POST' && pathname === '/upload-chunk') {
     try {
+      // Use nodejs stream capabilities for efficient uploads
       // Extract metadata from headers
       const fileName = req.headers['x-file-name'];
       const chunkIndex = parseInt(req.headers['x-chunk-index']);
@@ -105,78 +113,139 @@ const server = http.createServer((req, res) => {
         return res.end(JSON.stringify({ error: 'Missing or invalid headers' }));
       }
       
-      // Create unique ID based on filename and total chunks
-      const fileId = `${Date.now()}-${fileName.replace(/[^a-zA-Z0-9]/g, '_')}`;
-      const chunkDir = path.join(TEMP_DIR, fileId);
+      // Generate a unique ID for this file upload
+      const fileId = fileName + '-' + totalChunks + '-' + Math.floor(Date.now() / 1000);
       
-      // Create directory for this file's chunks if it doesn't exist
-      if (chunkIndex === 0 && fs.existsSync(chunkDir)) {
-        fs.rmSync(chunkDir, { recursive: true, force: true });
+      // If first chunk, initialize the upload tracker
+      if (chunkIndex === 0) {
+        // Create target directory if it doesn't exist
+        const outputDir = path.resolve(targetPath);
+        if (!fs.existsSync(outputDir)) {
+          fs.mkdirSync(outputDir, { recursive: true });
+        }
+        
+        const finalFilePath = path.join(outputDir, fileName);
+        
+        // Initialize the write stream with high performance settings
+        uploadTracker.set(fileId, {
+          finalPath: finalFilePath,
+          receivedChunks: new Set(),
+          writeStream: fs.createWriteStream(finalFilePath, { 
+            highWaterMark: HIGH_WATER_MARK,
+            flags: 'w'
+          }),
+          totalChunks: totalChunks,
+          createdAt: Date.now(),
+          // Set a longer timeout for uploads to allow background tab uploads
+          timeout: setTimeout(() => {
+            const upload = uploadTracker.get(fileId);
+            if (upload && upload.writeStream) {
+              upload.writeStream.end();
+              console.log(`Upload timeout for ${fileId}`);
+            }
+            uploadTracker.delete(fileId);
+          }, UPLOAD_TIMEOUT)
+        });
+        
+        console.log(`New upload started: ${fileName} (${fileId})`);
       }
       
-      if (!fs.existsSync(chunkDir)) {
-        fs.mkdirSync(chunkDir, { recursive: true });
-      }
-      
-      // Write chunk to temporary file
-      const chunkFilePath = path.join(chunkDir, `chunk-${chunkIndex}`);
-      
-      // Get raw body data
-      let data = [];
-      req.on('data', chunk => {
-        data.push(chunk);
-      });
-      
-      req.on('end', () => {
-        const buffer = Buffer.concat(data);
-        
-        // Write chunk to disk
-        fs.writeFileSync(chunkFilePath, buffer);
-        
-        // Check if this was the last chunk
-        const files = fs.readdirSync(chunkDir).filter(file => file.startsWith('chunk-'));
-        
-        if (files.length === totalChunks) {
-          // All chunks received, combine them
+      // Get the upload tracker for this file
+      const upload = uploadTracker.get(fileId);
+      if (!upload) {
+        // If the tracker is missing but we're on chunk 0, create it
+        if (chunkIndex === 0) {
+          // Reinitialize the tracker
           const outputDir = path.resolve(targetPath);
-          
-          // Create upload directory if it doesn't exist
           if (!fs.existsSync(outputDir)) {
             fs.mkdirSync(outputDir, { recursive: true });
           }
           
           const finalFilePath = path.join(outputDir, fileName);
-          const writeStream = fs.createWriteStream(finalFilePath);
           
-          // Combine all chunks in order
-          for (let i = 0; i < totalChunks; i++) {
-            const chunkPath = path.join(chunkDir, `chunk-${i}`);
-            if (fs.existsSync(chunkPath)) {
-              const chunkData = fs.readFileSync(chunkPath);
-              writeStream.write(chunkData);
-            } else {
-              console.error(`Missing chunk ${i} for file ${fileName}`);
-            }
-          }
+          // Initialize the write stream with high performance settings
+          uploadTracker.set(fileId, {
+            finalPath: finalFilePath,
+            receivedChunks: new Set(),
+            writeStream: fs.createWriteStream(finalFilePath, { 
+              highWaterMark: HIGH_WATER_MARK,
+              flags: 'w'
+            }),
+            totalChunks: totalChunks,
+            createdAt: Date.now(),
+            timeout: setTimeout(() => {
+              const upload = uploadTracker.get(fileId);
+              if (upload && upload.writeStream) {
+                upload.writeStream.end();
+              }
+              uploadTracker.delete(fileId);
+            }, UPLOAD_TIMEOUT)
+          });
           
-          writeStream.end();
+          console.log(`Reinitialized upload: ${fileName} (${fileId})`);
+        } else {
+          res.writeHead(400);
+          return res.end(JSON.stringify({ 
+            error: 'Upload session not found. The upload may have expired or the first chunk was not received.',
+            shouldRestart: true
+          }));
+        }
+      }
+      
+      // Check if this chunk was already received (handle retries)
+      if (upload.receivedChunks.has(chunkIndex)) {
+        res.writeHead(200);
+        return res.end(JSON.stringify({ 
+          success: true, 
+          message: `Chunk ${chunkIndex + 1}/${totalChunks} already received`
+        }));
+      }
+      
+      // Pipe the data directly from request to file stream
+      req.pipe(upload.writeStream, { end: false });
+      
+      // Track when the chunk is done
+      req.on('end', () => {
+        // Mark this chunk as received
+        upload.receivedChunks.add(chunkIndex);
+        
+        // Check if all chunks have been received
+        if (upload.receivedChunks.size === upload.totalChunks) {
+          // Close the file stream
+          upload.writeStream.end(() => {
+            console.log(`Upload complete: ${fileName} (${fileId})`);
+          });
           
-          // Clean up temporary files
-          setTimeout(() => {
-            try {
-              fs.rmSync(chunkDir, { recursive: true, force: true });
-            } catch (error) {
-              console.error('Error cleaning up chunks:', error);
-            }
-          }, 1000);
+          // Clear the timeout and remove from tracker
+          clearTimeout(upload.timeout);
+          uploadTracker.delete(fileId);
           
+          // Send success response
           res.writeHead(200);
-          res.end('File upload complete');
+          res.end(JSON.stringify({
+            success: true,
+            message: 'File upload complete',
+            filePath: upload.finalPath
+          }));
         } else {
           // More chunks expected
           res.writeHead(200);
-          res.end('Chunk received');
+          res.end(JSON.stringify({
+            success: true,
+            message: `Chunk ${chunkIndex + 1}/${totalChunks} received`,
+            received: upload.receivedChunks.size
+          }));
         }
+      });
+      
+      // Handle errors
+      req.on('error', (error) => {
+        console.error(`Chunk upload error for ${fileId}, chunk ${chunkIndex}:`, error);
+        res.writeHead(500);
+        res.end(JSON.stringify({
+          error: 'Error uploading chunk',
+          details: error.message
+        }));
       });
     } catch (error) {
       console.error('Error in chunk upload:', error);
@@ -297,6 +366,34 @@ const server = http.createServer((req, res) => {
     res.end('Not found');
   }
 });
+
+// Clean up upload tracker on server shutdown
+process.on('SIGINT', () => {
+  for (const [fileId, upload] of uploadTracker.entries()) {
+    if (upload.writeStream) {
+      upload.writeStream.end();
+    }
+    clearTimeout(upload.timeout);
+  }
+  uploadTracker.clear();
+  process.exit(0);
+});
+
+// Periodically clean up stale uploads (every hour)
+setInterval(() => {
+  const now = Date.now();
+  for (const [fileId, upload] of uploadTracker.entries()) {
+    // If upload is older than 24 hours and not completed
+    if (now - upload.createdAt > UPLOAD_TIMEOUT) {
+      console.log(`Cleaning up stale upload: ${fileId}`);
+      if (upload.writeStream) {
+        upload.writeStream.end();
+      }
+      clearTimeout(upload.timeout);
+      uploadTracker.delete(fileId);
+    }
+  }
+}, 60 * 60 * 1000);
 
 // Helper function to get current path
 function getCurrentPath() {
