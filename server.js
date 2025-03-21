@@ -10,34 +10,154 @@ const events = require('events');
 events.defaultMaxListeners = 30;
 
 // Create temp directory for chunk uploads
-const TEMP_DIR = path.join(os.tmpdir(), 'file-server-chunks');
-if (!fs.existsSync(TEMP_DIR)) {
-  fs.mkdirSync(TEMP_DIR, { recursive: true });
+const tempUploadDir = path.join(os.tmpdir(), 'file-server-chunks');
+if (!fs.existsSync(tempUploadDir)) {
+  fs.mkdirSync(tempUploadDir, { recursive: true });
 }
 
 // Track uploads in memory to improve performance
 const uploadTracker = new Map();
 
-// Constants for performance tuning
-const HIGH_WATER_MARK = 8 * 1024 * 1024; // Increase to 8MB buffer for write streams
-const WRITE_STREAM_OPTIONS = {
-  highWaterMark: HIGH_WATER_MARK,
-  flags: 'w'
+// Dynamic resource configuration
+const systemConfig = {
+  // System resource detection
+  totalMemory: os.totalmem(),
+  freeMemory: os.freemem(),
+  cpuCount: os.cpus().length,
+  tmpDir: os.tmpdir(),
+  
+  // Performance configurations - dynamically calculated based on system resources
+  getHighWaterMark: function(clientSpeed, chunkSize) {
+    // Calculate optimal buffer size based on available system memory and client speed
+    const memPercentage = this.freeMemory / this.totalMemory;
+    const baseSize = memPercentage > 0.5 ? 
+      16 * 1024 * 1024 : // High memory availability - use larger buffers (16MB)
+      (memPercentage > 0.3 ? 
+        8 * 1024 * 1024 : // Medium memory availability (8MB)
+        4 * 1024 * 1024); // Low memory availability (4MB)
+    
+    // Adjust based on client speed if available
+    if (clientSpeed && clientSpeed > 0) {
+      // Higher speeds need larger buffers to maintain throughput
+      const speedAdjustment = Math.min(clientSpeed / (2 * 1024 * 1024), 4); // Scale factor 1-4
+      return Math.ceil(baseSize * speedAdjustment);
+    }
+    
+    // If no client speed, use CPU count as a scaling factor
+    return Math.ceil(baseSize * Math.min(this.cpuCount / 4, 2));
+  },
+  
+  getLowWaterMark: function(highWaterMark) {
+    return Math.floor(highWaterMark / 2);
+  },
+  
+  getUploadTimeout: function(totalChunks, chunkSize) {
+    // Estimate total file size
+    const estimatedFileSize = totalChunks * chunkSize;
+    
+    // Base timeout on file size: 24 hours for files < 1GB, scale up for larger files
+    const baseTimeout = 24 * 60 * 60 * 1000; // 24 hours in ms
+    
+    if (estimatedFileSize < 1024 * 1024 * 1024) { // Less than 1GB
+      return baseTimeout;
+    } else {
+      // Scale timeout based on file size, with diminishing returns for very large files
+      const sizeScale = Math.log2(estimatedFileSize / (1024 * 1024 * 1024)) + 1;
+      return Math.ceil(baseTimeout * sizeScale);
+    }
+  },
+  
+  getSocketTimeout: function(chunkSize, clientSpeed) {
+    // Calculate how long this chunk should take to upload
+    const baseTimeout = 5 * 60 * 1000; // 5 minutes base timeout
+    
+    if (clientSpeed && chunkSize) {
+      // Estimate transfer time and add generous margin
+      const transferTimeMs = (chunkSize / clientSpeed) * 1000;
+      const safeTimeout = transferTimeMs * 10; // 10x margin for safety
+      
+      // Use at least 2 minutes, at most 20 minutes
+      return Math.max(2 * 60 * 1000, Math.min(safeTimeout, 20 * 60 * 1000));
+    }
+    
+    return baseTimeout;
+  },
+  
+  getMemoryChunkSize: function() {
+    // Scale processing chunk size based on available memory
+    const memPercentage = this.freeMemory / this.totalMemory;
+    
+    if (memPercentage > 0.7) { // Lots of memory available
+      return 2 * 1024 * 1024; // 2MB
+    } else if (memPercentage > 0.4) { // Medium memory
+      return 1 * 1024 * 1024; // 1MB
+    } else { // Limited memory
+      return 512 * 1024; // 512KB
+    }
+  },
+  
+  getFileDescriptorTimeout: function() {
+    // Scale timeout based on system load
+    const loadAvg = os.loadavg()[0];
+    
+    if (loadAvg < 1) { // System not busy
+      return 60 * 60 * 1000; // 1 hour
+    } else if (loadAvg < 2) { // Moderately busy
+      return 30 * 60 * 1000; // 30 minutes
+    } else { // Very busy
+      return 15 * 60 * 1000; // 15 minutes
+    }
+  },
+  
+  // Update system resource data
+  updateResourceInfo: function() {
+    this.freeMemory = os.freemem();
+    // Update other dynamic resources if needed
+    return this;
+  }
 };
 
-// Performance settings
-const LOW_WATER_MARK = 4 * 1024 * 1024; // Increase to 4MB threshold
-const UPLOAD_TIMEOUT = 48 * 60 * 60 * 1000; // Increase to 48 hours timeout for very large uploads
-const SOCKET_TIMEOUT = 10 * 60 * 1000; // 10 minute socket timeout
+// Set up periodic resource update
+setInterval(() => {
+  systemConfig.updateResourceInfo();
+}, 60 * 1000); // Update resource info every minute
+
+// Initial write stream options template - will be customized per upload
+const getWriteStreamOptions = (clientSpeed, chunkSize) => {
+  // Update system info before calculating
+  systemConfig.updateResourceInfo();
+  
+  // Get dynamic high water mark
+  const highWaterMark = systemConfig.getHighWaterMark(clientSpeed, chunkSize);
+  
+  return {
+    highWaterMark,
+    lowWaterMark: systemConfig.getLowWaterMark(highWaterMark),
+    flags: 'w',
+    autoClose: false,
+    encoding: null,
+    emitClose: true
+  };
+};
 
 const server = http.createServer((req, res) => {
-  // Increase socket timeout for uploads
-  req.socket.setTimeout(SOCKET_TIMEOUT);
+  // Get dynamic configuration based on current system state
+  systemConfig.updateResourceInfo();
+  
+  // Extract potential client info for socket timeout
+  const clientSpeed = req.headers['x-client-speed'] ? 
+    parseInt(req.headers['x-client-speed'], 10) : null;
+  const chunkSize = req.headers['x-chunk-size'] ? 
+    parseInt(req.headers['x-chunk-size'], 10) : null;
+    
+  // Dynamic socket timeout based on request info
+  const socketTimeout = systemConfig.getSocketTimeout(chunkSize, clientSpeed);
+  req.socket.setTimeout(socketTimeout);
   
   // Set CORS headers for cross-tab uploads
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-File-Name, X-Chunk-Index, X-Total-Chunks, X-File-Path, Content-Disposition, Content-Range, X-File-Id');
+  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-File-Name, X-Chunk-Index, X-Total-Chunks, X-File-Path, Content-Disposition, Content-Range, X-File-Id, X-Client-Speed, X-Chunk-Size');
   
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
@@ -47,9 +167,41 @@ const server = http.createServer((req, res) => {
   }
 
   const { pathname, query } = parse(req.url, true);
-  
+
+  // Speed test endpoint for client-side upload optimization
+  if (req.method === 'GET' && pathname === '/speed-test') {
+    try {
+      // Get requested test size, default to 256KB
+      const testSize = parseInt(query.size || '262144', 10);
+      
+      // Limit max test size to 1MB for security
+      const safeSize = Math.min(testSize, 1024 * 1024);
+      
+      // Generate random data of specified size
+      const testData = Buffer.alloc(safeSize);
+      for (let i = 0; i < safeSize; i += 4) {
+        // Fill with random data
+        testData.writeUInt32LE(Math.floor(Math.random() * 0xFFFFFFFF), i);
+      }
+      
+      // Send the data with appropriate headers
+      res.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': safeSize,
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+        'Pragma': 'no-cache'
+      });
+      
+      res.end(testData);
+    } catch (error) {
+      console.error('Error in speed test:', error);
+      res.writeHead(500);
+      res.end('Error generating test data');
+    }
+  }
+
   // Root endpoint - serve index.html
-  if (req.method === 'GET' && pathname === '/') {
+  else if (req.method === 'GET' && pathname === '/') {
     fs.readFile('./public/index.html', (err, data) => {
       if (err) {
         res.writeHead(500);
@@ -59,7 +211,7 @@ const server = http.createServer((req, res) => {
       res.end(data);
     });
   }
-  
+
   // List drives endpoint (Windows only)
   else if (req.method === 'GET' && pathname === '/list-drives') {
     if (process.platform === 'win32') {
@@ -124,7 +276,7 @@ const server = http.createServer((req, res) => {
       // Set CORS headers for chunked uploads
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-File-Name, X-Chunk-Index, X-Total-Chunks, X-File-Path, Content-Disposition, Content-Range, X-File-Id');
+      res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-File-Name, X-Chunk-Index, X-Total-Chunks, X-File-Path, Content-Disposition, Content-Range, X-File-Id, X-Client-Speed, X-Chunk-Size');
       
       // Extract metadata from headers
       const fileName = decodeURIComponent(req.headers['x-file-name'] || '');
@@ -132,6 +284,13 @@ const server = http.createServer((req, res) => {
       const totalChunks = parseInt(req.headers['x-total-chunks'] || '1', 10);
       const fileId = req.headers['x-file-id'] || Date.now().toString();
       const targetPath = query.path || getCurrentPath();
+      
+      // Get client-side speed information if available
+      const clientSpeed = parseInt(req.headers['x-client-speed'] || '0', 10);
+      const chunkSize = parseInt(req.headers['x-chunk-size'] || '0', 10);
+      
+      // Dynamically adjust server resources based on client capabilities
+      const dynamicHighWaterMark = determineOptimalBufferSize(clientSpeed, chunkSize);
       
       // Verify file name
       if (!fileName) {
@@ -164,19 +323,22 @@ const server = http.createServer((req, res) => {
         
         const finalFilePath = path.join(outputDir, fileName);
         
-        // Initialize the write stream with high performance settings
+        // Dynamic upload timeout based on total file size
+        const uploadTimeout = systemConfig.getUploadTimeout(totalChunks, chunkSize);
+        
+        // Get optimized write stream options for this client
+        const writeStreamOptions = getWriteStreamOptions(clientSpeed, chunkSize);
+        
+        // Initialize the write stream with dynamically calculated performance settings
         uploadTracker.set(fileId, {
           finalPath: finalFilePath,
           receivedChunks: new Set(),
-          writeStream: fs.createWriteStream(finalFilePath, { 
-            highWaterMark: HIGH_WATER_MARK,
-            lowWaterMark: LOW_WATER_MARK,
-            flags: 'w',
-            autoClose: false
-          }),
+          writeStream: fs.createWriteStream(finalFilePath, writeStreamOptions),
           totalChunks: totalChunks,
           createdAt: Date.now(),
-          // Set a longer timeout for uploads to allow background tab uploads
+          lastActivity: Date.now(),
+          clientSpeed: clientSpeed,
+          // Set a dynamic timeout for uploads based on file size
           timeout: setTimeout(() => {
             const upload = uploadTracker.get(fileId);
             if (upload && upload.writeStream) {
@@ -184,7 +346,7 @@ const server = http.createServer((req, res) => {
               console.log(`Upload timeout for ${fileId}`);
             }
             uploadTracker.delete(fileId);
-          }, UPLOAD_TIMEOUT)
+          }, uploadTimeout)
         });
         
         console.log(`New upload started: ${fileName} (${fileId})`);
@@ -249,25 +411,29 @@ const server = http.createServer((req, res) => {
           
           const finalFilePath = path.join(outputDir, fileName);
           
-          // Initialize the write stream with high performance settings
+          // Dynamic upload timeout based on total file size
+          const uploadTimeout = systemConfig.getUploadTimeout(totalChunks, chunkSize);
+          
+          // Get optimized write stream options for this client
+          const writeStreamOptions = getWriteStreamOptions(clientSpeed, chunkSize);
+          
+          // Initialize the write stream with dynamically calculated performance settings
           uploadTracker.set(fileId, {
             finalPath: finalFilePath,
             receivedChunks: new Set(),
-            writeStream: fs.createWriteStream(finalFilePath, { 
-              highWaterMark: HIGH_WATER_MARK,
-              lowWaterMark: LOW_WATER_MARK,
-              flags: 'w',
-              autoClose: false
-            }),
+            writeStream: fs.createWriteStream(finalFilePath, writeStreamOptions),
             totalChunks: totalChunks,
             createdAt: Date.now(),
+            lastActivity: Date.now(),
+            clientSpeed: clientSpeed,
+            // Set a dynamic timeout for uploads based on file size
             timeout: setTimeout(() => {
               const upload = uploadTracker.get(fileId);
               if (upload && upload.writeStream) {
                 upload.writeStream.end();
               }
               uploadTracker.delete(fileId);
-            }, UPLOAD_TIMEOUT)
+            }, uploadTimeout)
           });
           
           console.log(`Reinitialized upload: ${fileName} (${fileId})`);
@@ -292,27 +458,54 @@ const server = http.createServer((req, res) => {
       }
       
       // Pipe the data directly from request to file stream
-      let dataBuffer = Buffer.alloc(0);
-      
-      // Collect all chunk data first
-      req.on('data', (chunk) => {
-        dataBuffer = Buffer.concat([dataBuffer, chunk]);
+      // Don't buffer the entire chunk in memory - stream it directly
+      req.on('data', async (chunk) => {
+        try {
+          if (!upload || !upload.writeStream) {
+            // If the stream was closed to free resources, reopen it
+            if (upload && upload.streamClosed) {
+              console.log(`Reopening stream for ${fileId}`);
+              
+              // Reopen write stream in append mode
+              upload.writeStream = fs.createWriteStream(upload.finalPath, {
+                highWaterMark: HIGH_WATER_MARK,
+                lowWaterMark: LOW_WATER_MARK,
+                flags: 'a', // Append mode
+                autoClose: false,
+                encoding: null
+              });
+              
+              upload.streamClosed = false;
+            } else {
+              console.error(`Upload tracker missing for ${fileId}, chunk ${chunkIndex}`);
+              return;
+            }
+          }
+          
+          // Update last activity timestamp
+          upload.lastActivity = Date.now();
+          
+          // Write the chunk directly to file - handle backpressure properly
+          const canContinue = upload.writeStream.write(chunk);
+          
+          // If backpressure detected, wait for drain before continuing
+          if (!canContinue) {
+            await new Promise(resolve => upload.writeStream.once('drain', resolve));
+          }
+        } catch (error) {
+          console.error(`Error writing chunk data for ${fileId}, chunk ${chunkIndex}:`, error);
+        }
       });
       
       // Track when the chunk is done
-      req.on('end', async () => {
+      req.on('end', () => {
         try {
-          // Write data to the file with backpressure handling
-          const canContinue = upload.writeStream.write(dataBuffer);
-          
-          // Handle backpressure if needed
-          if (!canContinue) {
-            // Wait for drain event before proceeding
-            await new Promise(resolve => upload.writeStream.once('drain', resolve));
+          // Mark this chunk as received - no need to wait for additional processing
+          const upload = uploadTracker.get(fileId);
+          if (!upload) {
+            console.error(`Upload tracker missing at end for ${fileId}, chunk ${chunkIndex}`);
+            return;
           }
-          
-          // Clear buffer
-          dataBuffer = null;
           
           // Mark this chunk as received
           upload.receivedChunks.add(chunkIndex);
@@ -360,11 +553,11 @@ const server = http.createServer((req, res) => {
             }));
           }
         } catch (error) {
-          console.error('Error in chunk upload:', error);
+          console.error('Error in chunk completion:', error);
           sendErrorResponse(
             res, 
             500, 
-            `Server error during upload: ${error.message || 'Unknown error'}`, 
+            `Server error during upload completion: ${error.message || 'Unknown error'}`, 
             error.stack,
             error.code
           );
@@ -457,27 +650,27 @@ const server = http.createServer((req, res) => {
 
     req.on('end', () => {
       try {
-        const parts = body.toString().split('--' + boundary);
-        let fileBuffer, fileName, destPath;
-  
-        parts.forEach(part => {
-          if (part.includes('name="file"')) {
-            const matches = part.match(/filename="(.+?)"/);
-            if (matches) {
-              fileName = matches[1];
-              const start = part.indexOf('\r\n\r\n') + 4;
-              const content = part.slice(start, part.lastIndexOf('\r\n'));
-              fileBuffer = Buffer.from(content, 'binary');
-            }
-          }
-          if (part.includes('name="targetPath"')) {
+      const parts = body.toString().split('--' + boundary);
+      let fileBuffer, fileName, destPath;
+
+      parts.forEach(part => {
+        if (part.includes('name="file"')) {
+          const matches = part.match(/filename="(.+?)"/);
+          if (matches) {
+            fileName = matches[1];
             const start = part.indexOf('\r\n\r\n') + 4;
-            destPath = part.slice(start, part.lastIndexOf('\r\n')).trim();
+            const content = part.slice(start, part.lastIndexOf('\r\n'));
+            fileBuffer = Buffer.from(content, 'binary');
           }
-        });
-  
-        if (!fileBuffer || !fileName || !destPath) {
-          res.writeHead(400);
+        }
+        if (part.includes('name="targetPath"')) {
+          const start = part.indexOf('\r\n\r\n') + 4;
+          destPath = part.slice(start, part.lastIndexOf('\r\n')).trim();
+        }
+      });
+
+      if (!fileBuffer || !fileName || !destPath) {
+        res.writeHead(400);
           return res.end(JSON.stringify({
             success: false,
             error: 'Missing required fields'
@@ -487,9 +680,9 @@ const server = http.createServer((req, res) => {
         // Create upload directory if it doesn't exist
         if (!fs.existsSync(destPath)) {
           fs.mkdirSync(destPath, { recursive: true });
-        }
-  
-        const fullPath = path.join(destPath, fileName);
+      }
+
+      const fullPath = path.join(destPath, fileName);
         
         // Use write stream with performance optimizations
         const writeStream = fs.createWriteStream(fullPath, WRITE_STREAM_OPTIONS);
@@ -720,7 +913,7 @@ const server = http.createServer((req, res) => {
       }
     });
   }
-  
+
   // 404 Not Found for any other requests
   else {
     res.writeHead(404);
@@ -744,14 +937,47 @@ process.on('SIGINT', () => {
 setInterval(() => {
   const now = Date.now();
   for (const [fileId, upload] of uploadTracker.entries()) {
-    // If upload is older than 24 hours and not completed
-    if (now - upload.createdAt > UPLOAD_TIMEOUT) {
+    // Update system resource info before calculating timeouts
+    systemConfig.updateResourceInfo();
+    
+    // Calculate dynamic timeout for this upload
+    const dynamicTimeout = upload.clientSpeed ? 
+      systemConfig.getUploadTimeout(upload.totalChunks, upload.chunkSize) : 
+      24 * 60 * 60 * 1000; // 24 hour default
+    
+    // If upload is older than dynamic timeout and not completed
+    if (now - upload.createdAt > dynamicTimeout) {
       console.log(`Cleaning up stale upload: ${fileId}`);
       if (upload.writeStream) {
         upload.writeStream.end();
       }
       clearTimeout(upload.timeout);
       uploadTracker.delete(fileId);
+    }
+    // Close idle write streams to free up file descriptors
+    else {
+      // Calculate dynamic file descriptor timeout based on system load
+      const fdTimeout = systemConfig.getFileDescriptorTimeout();
+      
+      if (now - upload.lastActivity > fdTimeout && upload.writeStream && !upload.writeStream.closed) {
+        console.log(`Closing idle write stream for ${fileId} to free resources`);
+        
+        // Store the final path so we can reopen when needed
+        const finalPath = upload.finalPath;
+        const receivedChunks = upload.receivedChunks;
+        
+        // Close the stream properly
+        upload.writeStream.end();
+        
+        // Update tracker with null write stream but keep other data
+        uploadTracker.set(fileId, {
+          ...upload,
+          writeStream: null,
+          finalPath: finalPath,
+          receivedChunks: receivedChunks,
+          streamClosed: true
+        });
+      }
     }
   }
 }, 60 * 60 * 1000);
@@ -839,6 +1065,28 @@ function sendErrorResponse(res, statusCode, errorMessage, details = null, errorC
     code: errorCode,
     details: details
   }));
+}
+
+// Helper function to determine optimal buffer size based on client capabilities
+function determineOptimalBufferSize(clientSpeed, chunkSize) {
+  // Update system resources
+  systemConfig.updateResourceInfo();
+  
+  // If no client speed info, calculate based on system resources only
+  if (!clientSpeed || !chunkSize) {
+    return systemConfig.getHighWaterMark();
+  }
+  
+  // Return dynamically calculated high water mark
+  return systemConfig.getHighWaterMark(clientSpeed, chunkSize);
+}
+
+// Helper function to format sizes
+function formatSize(bytes) {
+  if (bytes === 0) return '0 B';
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
 }
 
 const PORT = process.env.PORT || 3000;
