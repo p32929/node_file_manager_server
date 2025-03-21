@@ -15,15 +15,15 @@ if (!fs.existsSync(TEMP_DIR)) {
 const uploadTracker = new Map();
 
 // Constants for performance tuning
-const HIGH_WATER_MARK = 2 * 1024 * 1024; // 2MB buffer for write streams
+const HIGH_WATER_MARK = 8 * 1024 * 1024; // Increase to 8MB buffer for write streams
 const WRITE_STREAM_OPTIONS = {
   highWaterMark: HIGH_WATER_MARK,
   flags: 'w'
 };
 
 // Performance settings
-const LOW_WATER_MARK = 1024 * 1024; // 1MB threshold before resuming writes
-const UPLOAD_TIMEOUT = 24 * 60 * 60 * 1000; // 24 hours timeout for uploads
+const LOW_WATER_MARK = 4 * 1024 * 1024; // Increase to 4MB threshold
+const UPLOAD_TIMEOUT = 48 * 60 * 60 * 1000; // Increase to 48 hours timeout for very large uploads
 
 const server = http.createServer((req, res) => {
   // Set CORS headers for cross-tab uploads
@@ -162,6 +162,7 @@ const server = http.createServer((req, res) => {
           receivedChunks: new Set(),
           writeStream: fs.createWriteStream(finalFilePath, { 
             highWaterMark: HIGH_WATER_MARK,
+            lowWaterMark: LOW_WATER_MARK,
             flags: 'w',
             autoClose: false
           }),
@@ -179,6 +180,34 @@ const server = http.createServer((req, res) => {
         });
         
         console.log(`New upload started: ${fileName} (${fileId})`);
+        
+        // Respond immediately for the first chunk to avoid client waiting
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: 'Upload session initialized',
+          fileId: fileId
+        }));
+        
+        // Process the data after response has been sent
+        req.on('data', (chunk) => {
+          // Process data chunks as they come
+          const upload = uploadTracker.get(fileId);
+          if (upload && upload.writeStream) {
+            upload.writeStream.write(chunk);
+          }
+        });
+        
+        req.on('end', () => {
+          const upload = uploadTracker.get(fileId);
+          if (upload) {
+            upload.receivedChunks.add(chunkIndex);
+            console.log(`Chunk ${chunkIndex} processed for ${fileId}`);
+          }
+        });
+        
+        // Early return since we've already sent the response
+        return;
       }
       
       // Get the upload tracker for this file

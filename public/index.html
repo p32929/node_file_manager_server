@@ -933,18 +933,16 @@
     let totalChunks = 0; // Total number of chunks for current upload
     let lastVisibilityNotification = 0; // Track when last notification was shown
     let lastUIUpdate = 0; // Track when last UI update was made
+    let optimalChunkSize = 5 * 1024 * 1024; // Default chunk size
+    let uploadedFileId = null; // Store the fileId from the server
+    let uploadedBytes = 0; // Track total bytes uploaded
+    let uploadStartTime = 0; // Track when upload started
     
     // Track visibility changes
     document.addEventListener('visibilitychange', function() {
       if (isUploading) {
         isThrottled = document.hidden;
-        
-        // Notify user when upload is running in background
-        const now = Date.now();
-        if (document.hidden && now - lastVisibilityNotification > 10000) {
-          showToast('Upload continuing in background. Return to this tab for full speed.', 'info');
-          lastVisibilityNotification = now;
-        }
+        // Remove the notification message completely
       }
     });
     
@@ -956,8 +954,7 @@
       }
 
       // Calculate optimal chunk size based on file size
-      // Use smaller chunks for smaller files, larger chunks for bigger files
-      let optimalChunkSize = 5 * 1024 * 1024; // Default 5MB
+      optimalChunkSize = 5 * 1024 * 1024; // Default 5MB
       if (file.size < 10 * 1024 * 1024) { // Less than 10MB
         optimalChunkSize = 1 * 1024 * 1024; // Use 1MB chunks
       } else if (file.size > 1024 * 1024 * 1024) { // More than 1GB
@@ -970,16 +967,14 @@
       chunkUploadAborted = false;
       isUploading = true;
       isThrottled = document.hidden; // Start throttled if in background
-      lastProgressTime = 0;
+      lastProgressTime = Date.now(); // Initialize with current time
       lastChunkBytes = 0;
       retryCount = 0;
       retryDelay = 1000;
       uploadSpeeds = [];
-      
-      // For very large files, show a warning
-      if (file.size > 100 * 1024 * 1024) { // 100MB
-        showToast('Large file detected. Upload will continue in the background.', 'info');
-      }
+      uploadStartTime = Date.now();
+      uploadedBytes = 0;
+      uploadedFileId = null;
       
       // Show upload in progress
       updateUploadButtonState(true);
@@ -988,18 +983,10 @@
       document.querySelector('.progress-container').style.display = 'block';
       document.querySelector('.progress-bar').style.width = '0%';
       document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-info-circle"></i> Preparing to upload ${formatSize(file.size)}...`;
+        `<i class="fas fa-info-circle"></i> Starting upload of ${formatSize(file.size)}...`;
       
-      // Create temp directory if it doesn't exist
-      function ensureTempDir(callback) {
-        // We'll handle this on the server side, just proceed
-        callback();
-      }
-      
-      // Start the upload
-      ensureTempDir(() => {
-        uploadChunk(file);
-      });
+      // Start the upload immediately without delay
+      uploadChunk(file);
     }
 
     function updateUploadButtonState(isDisabled) {
@@ -1040,6 +1027,10 @@
       const end = Math.min(file.size, start + optimalChunkSize);
       const chunk = file.slice(start, end);
       const chunkSize = end - start;
+
+      // Update progress immediately to show we're starting this chunk
+      document.getElementById('uploadInfo').innerHTML = 
+        `<i class="fas fa-upload"></i> Uploading chunk ${currentChunk + 1}/${totalChunks} (${formatSize(chunkSize)})...`;
 
       // Create FormData
       const formData = new FormData();
@@ -1083,12 +1074,14 @@
               const bytesUploaded = currentChunkBytes - lastChunkBytes;
               const speed = bytesUploaded / timeElapsed; // bytes per second
               
-              // Add to rolling window
-              uploadSpeeds.push(speed);
-              
-              // Keep only the most recent samples
-              if (uploadSpeeds.length > SPEED_WINDOW_SIZE) {
-                uploadSpeeds.shift();
+              // Add to rolling window - only if it's a reasonable value
+              if (speed > 0 && speed < 1000 * 1024 * 1024) { // Ignore unreasonable speeds (>1GB/s)
+                uploadSpeeds.push(speed);
+                
+                // Keep only the most recent samples
+                if (uploadSpeeds.length > SPEED_WINDOW_SIZE) {
+                  uploadSpeeds.shift();
+                }
               }
             }
           }
@@ -1119,64 +1112,35 @@
               return;
             }
             
+            // Store the fileId from the first chunk response
             if (chunkIndex === 0) {
-              uploadedFileId = response.fileId || fileId;
+              uploadedFileId = response.fileId;
+              console.log(`Got fileId from server: ${uploadedFileId}`);
             }
             
-            chunksUploaded++;
-            const newProgress = (chunksUploaded / totalChunks) * 100;
-            currentProgress = newProgress;
-            updateProgress();
-            
-            // Calculate upload speed
-            const now = Date.now();
-            const elapsedTime = (now - lastProgressTime) / 1000; // seconds
-            lastProgressTime = now;
-            
-            // Update uploadedBytes for speed calculation
-            const chunkSize = chunk.end - chunk.start;
+            // Mark this chunk as complete
             uploadedBytes += chunkSize;
             
-            // Calculate current speed in bytes/second
-            if (elapsedTime > 0) {
-              const currentSpeed = chunkSize / elapsedTime;
-              
-              // Add to rolling window of speeds
-              uploadSpeeds.push(currentSpeed);
-              if (uploadSpeeds.length > SPEED_WINDOW_SIZE) {
-                uploadSpeeds.shift(); // Remove oldest speed
-              }
-              
-              // Calculate average speed from recent samples
-              const avgSpeed = uploadSpeeds.reduce((sum, speed) => sum + speed, 0) / uploadSpeeds.length;
-              
-              // Calculate remaining time
-              const remainingBytes = file.size - uploadedBytes;
-              const eta = remainingBytes / avgSpeed; // seconds
-              
-              updateUploadInfo(file, avgSpeed, eta);
-            }
-            
-            if (chunksUploaded === totalChunks) {
-              showToast('File uploaded successfully!', 'success');
+            // Check if we're done with all chunks
+            if (currentChunk >= totalChunks - 1) {
+              // We're done!
+              showToast('Upload complete!', 'success');
               isUploading = false;
-              updateProgress();
               
-              // Reset tracking variables for next upload
-              uploadStartTime = null;
-              uploadedBytes = 0;
-              uploadSpeeds = [];
+              // Update the UI
+              document.querySelector('.progress-bar').style.width = '100%';
+              document.getElementById('uploadInfo').innerHTML = 
+                `<i class="fas fa-check-circle"></i> Upload complete! ${formatSize(file.size)} uploaded successfully.`;
               
-              const uploadInfo = document.getElementById('uploadInfo');
-              if (uploadInfo) {
-                uploadInfo.innerHTML = `<i class="fas fa-check-circle"></i> ${file.name} uploaded successfully!`;
-              }
+              // Reenable the upload button
+              updateUploadButtonState(false);
               
               return;
             }
             
-            chunkIndex++;
+            // Move to the next chunk
             sendNextChunk();
+            
           } catch (e) {
             console.error('Error parsing server response:', e, xhr.responseText);
             const errorDetails = {
@@ -1303,6 +1267,10 @@
         document.getElementById('uploadInfo').textContent = '';
         updateUploadButtonState(false);
         return;
+      }
+      
+      if (!uploadedBytes || !totalBytes) {
+        return; // Skip if we don't have valid data
       }
       
       const overallPercent = Math.round((uploadedBytes / totalBytes) * 100);
