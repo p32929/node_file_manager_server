@@ -310,13 +310,12 @@
     }
     
     .upload-info-container {
-      height: 24px;
+      min-height: 24px;
       margin: 5px 0;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      white-space: normal;
+      overflow: visible;
       font-size: 14px;
-      line-height: 24px;
+      line-height: 1.5;
     }
     
     /* Add this to your existing CSS styles */
@@ -628,6 +627,37 @@
     
     .toast.success {
       max-width: 100%;
+    }
+
+    /* Add upload status styling */
+    .upload-status {
+      background-color: #f8f9fa;
+      border-radius: 8px;
+      padding: 12px 15px;
+      margin-top: 10px;
+      border: 1px solid #e9ecef;
+    }
+    
+    .status-item {
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .status-item:last-child {
+      margin-bottom: 0;
+    }
+    
+    .status-item strong {
+      color: var(--primary);
+      font-weight: 600;
+    }
+    
+    .status-item i {
+      color: var(--primary-dark);
+      width: 16px;
+      text-align: center;
     }
   </style>
 </head>
@@ -1667,7 +1697,14 @@
 
       // Update progress immediately to show we're starting this chunk
       document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-upload"></i> <span class="inline-status">Uploading chunk ${currentChunk + 1}/${totalChunks}</span>`;
+        `<div class="upload-status">
+          <div class="status-item">
+            <i class="fas fa-upload"></i> Uploading chunk ${currentChunk + 1}/${totalChunks}
+          </div>
+        </div>`;
+      
+      // Ensure the full progress gets updated right away
+      updateProgress();
 
       // Record the start time for this chunk
       const chunkStartTime = Date.now();
@@ -1747,7 +1784,7 @@
             
             // Capture instantaneous upload speed
             const now = Date.now();
-            if (now - lastUIUpdate >= 500) { // Update UI every 500ms
+            if (now - lastUIUpdate >= 200) { // Update UI more frequently (every 200ms instead of 500ms)
               const timeDiff = (now - uploadStartTime) / 1000; // in seconds
               const bytesChanged = uploadedBytes - lastChunkBytes;
               
@@ -2045,12 +2082,22 @@
       const progressText = `${formatSize(uploadedBytes)} of ${formatSize(file.size)}`;
       
       // Create a consistent status display with all information
-      document.getElementById('uploadInfo').innerHTML = 
-        `<div style="line-height: 1.5;">
-          <div><i class="fas fa-upload"></i> Progress: ${percent}% (${progressText})</div>
-          <div>Speed: ${speedText} | Chunk: ${currentChunk + 1}/${totalChunks}</div>
-          <div>Time remaining: ${etaText}</div>
-        </div>`;
+      document.getElementById('uploadInfo').innerHTML = `
+        <div class="upload-status">
+          <div class="status-item">
+            <i class="fas fa-upload"></i> Progress: <strong>${percent}%</strong> (${progressText})
+          </div>
+          <div class="status-item">
+            <i class="fas fa-exchange-alt"></i> Uploading chunk <strong>${currentChunk + 1}/${totalChunks}</strong>
+          </div>
+          <div class="status-item">
+            <i class="fas fa-tachometer-alt"></i> Speed: <strong>${speedText}</strong>
+          </div>
+          <div class="status-item">
+            <i class="fas fa-clock"></i> Time remaining: <strong>${etaText}</strong>
+          </div>
+        </div>
+      `;
     }
     
     // Format time in seconds to a human-readable string
