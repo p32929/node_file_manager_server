@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>File Uploader with Progress Tracking</title>
+  <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
+  <style>
+    /* General Styling */
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f4f4f4;
+      margin: 0;
+      padding: 20px;
+      color: #333;
+    }
+
+    h2 {
+      color: #444;
+      text-align: center;
+    }
+
+    /* Explorer Styling */
+    #explorer {
+      border: 1px solid #ddd;
+      background: #fff;
+      padding: 20px;
+      max-width: 500px;
+      box-shadow: 0 5px 10px rgba(0, 0, 0, 0.1);
+      border-radius: 10px;
+      margin: auto;
+    }
+
+    #pathDisplay {
+      font-weight: bold;
+      margin-bottom: 15px;
+      font-size: 14px;
+      color: #555;
+    }
+
+    .folder {
+      padding: 10px;
+      cursor: pointer;
+      border-radius: 5px;
+      transition: background 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
+    }
+
+    .folder:hover {
+      background: #e0f2ff;
+    }
+
+    .folder i {
+      color: #007bff;
+      font-size: 18px;
+    }
+
+    .buttons {
+      margin-top: 10px;
+      text-align: center;
+    }
+
+    .buttons button {
+      margin: 5px;
+      padding: 8px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      border: none;
+      background: #007bff;
+      color: white;
+      border-radius: 5px;
+      transition: background 0.3s;
+    }
+
+    .buttons button:hover {
+      background: #0056b3;
+    }
+
+    /* Upload Form */
+    #uploadForm {
+      margin-top: 30px;
+      padding: 20px;
+      border: 1px solid #ddd;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 5px 10px rgba(0, 0, 0, 0.1);
+      max-width: 500px;
+      margin: auto;
+      display: none;
+    }
+
+    /* Progress Bar */
+    .progress-container {
+      width: 100%;
+      background-color: #ddd;
+      border-radius: 5px;
+      margin-top: 10px;
+      display: none;
+    }
+
+    .progress-bar {
+      height: 12px;
+      width: 0%;
+      background: #007bff;
+      border-radius: 5px;
+      transition: width 0.3s;
+    }
+
+    /* Upload Info */
+    .upload-info {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+
+  <h2><i class="fas fa-folder-open"></i> Select a Folder to Upload Into</h2>
+
+  <div id="explorer">
+    <div id="pathDisplay">Loading...</div>
+    <div id="folders">Loading folders...</div>
+    <div class="buttons">
+      <button onclick="goUp()"><i class="fas fa-arrow-up"></i> Go Up</button>
+      <button onclick="selectFolder()"><i class="fas fa-check"></i> Select This Folder</button>
+    </div>
+  </div>
+
+  <form id="uploadForm" method="POST" enctype="multipart/form-data">
+    <h2><i class="fas fa-upload"></i> Upload File</h2>
+    <input type="file" id="fileInput" required><br><br>
+    <input type="hidden" name="targetPath" id="targetPath">
+    <button type="button" id="uploadButton" onclick="uploadFile()"><i class="fas fa-cloud-upload-alt"></i> Upload</button>
+
+    <div class="progress-container">
+      <div class="progress-bar"></div>
+    </div>
+
+    <div class="upload-info" id="uploadInfo"></div>
+  </form>
+
+  <script>
+    let currentPath = '/';
+
+    function fetchFolders(dirPath = '/') {
+      document.getElementById('folders').innerHTML = 'Loading...';
+
+      fetch(`/list-folders?path=${encodeURIComponent(dirPath)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.error) {
+            document.getElementById('folders').innerHTML = `<p style="color:red;">⚠ Error loading: ${data.error}</p>`;
+            return;
+          }
+
+          currentPath = data.path;
+          document.getElementById('pathDisplay').textContent = `Current Folder: ${currentPath}`;
+          const foldersDiv = document.getElementById('folders');
+          foldersDiv.innerHTML = '';
+
+          if (data.folders.length === 0) {
+            foldersDiv.textContent = '(No subfolders found)';
+          } else {
+            data.folders.forEach(name => {
+              const div = document.createElement('div');
+              div.className = 'folder';
+              div.innerHTML = `<i class="fas fa-folder"></i> <span>${name}</span>`;
+              div.onclick = () => fetchFolders(`${currentPath}/${name}`);
+              foldersDiv.appendChild(div);
+            });
+          }
+        })
+        .catch(err => {
+          document.getElementById('folders').innerHTML = `<p style="color:red;">⚠ Failed to load folders.</p>`;
+        });
+    }
+
+    function goUp() {
+      const parts = currentPath.split('/');
+      parts.pop();
+      fetchFolders(parts.join('/') || '/');
+    }
+
+    function selectFolder() {
+      document.getElementById('targetPath').value = currentPath;
+      document.getElementById('uploadForm').style.display = 'block';
+    }
+
+    function uploadFile() {
+      const file = document.getElementById('fileInput').files[0];
+      if (!file) return alert('Select a file first!');
+
+      document.getElementById('uploadButton').disabled = true;
+      
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('targetPath', currentPath);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/upload', true);
+
+      let startTime = Date.now();
+
+      xhr.upload.onprogress = function (event) {
+        let percent = Math.round((event.loaded / event.total) * 100);
+        let elapsedTime = (Date.now() - startTime) / 1000;
+        let speed = event.loaded / elapsedTime;
+        let remainingSize = event.total - event.loaded;
+
+        let speedText = formatSize(speed) + '/s';
+        let remainingText = formatSize(remainingSize) + ' left';
+
+        document.querySelector('.progress-container').style.display = 'block';
+        document.querySelector('.progress-bar').style.width = percent + '%';
+        document.getElementById('uploadInfo').innerHTML = 
+          `Uploading: ${percent}% (${speedText}) - ${remainingText}`;
+      };
+
+      xhr.onload = function () {
+        document.getElementById('uploadButton').disabled = false;
+        if (xhr.status === 200) {
+          alert('Upload Successful');
+        } else {
+          alert('Upload failed.');
+        }
+      };
+
+      xhr.send(formData);
+    }
+
+    function formatSize(bytes) {
+      if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + ' GB';
+      if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' MB';
+      if (bytes >= 1024) return (bytes / 1024).toFixed(2) + ' KB';
+      return bytes + ' B';
+    }
+
+    window.onload = () => fetchFolders('/');
+  </script>
+
+</body>
+</html>
