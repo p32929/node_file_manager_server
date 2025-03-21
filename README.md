@@ -1,8 +1,14 @@
-# **Node File Upload Server**  
+# node_file_upload_server 
 
 A **lightweight, self-hosted file upload server** with **zero external dependencies**. Just **clone the repo, run it with Node.js, and start uploading files**—no need to install any extra packages.  
 
 It comes with a **built-in file explorer** so you can **navigate directories and choose exactly where to save files** on the system. The **UI is simple and intuitive**, making file transfers effortless.  
+
+# Screenshots
+
+![Image](https://github.com/user-attachments/assets/733b21de-fb19-4c53-a76b-45a087fb757a)
+
+![Image](https://github.com/user-attachments/assets/9b7520a1-9abc-4717-8aa1-5a1e68dafc30)
 
 ---
 
