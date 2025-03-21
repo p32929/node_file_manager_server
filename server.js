@@ -18,6 +18,9 @@ if (!fs.existsSync(tempUploadDir)) {
 // Track uploads in memory to improve performance
 const uploadTracker = new Map();
 
+// Add error tracking for uploads
+const uploadErrors = new Map();
+
 // Dynamic resource configuration
 const systemConfig = {
   // System resource detection
@@ -317,8 +320,25 @@ const server = http.createServer((req, res) => {
       if (chunkIndex === 0) {
         // Create target directory if it doesn't exist
         const outputDir = path.resolve(targetPath);
-        if (!fs.existsSync(outputDir)) {
-          fs.mkdirSync(outputDir, { recursive: true });
+        try {
+          if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+          }
+        } catch (dirError) {
+          console.error(`Error creating directory ${outputDir}:`, dirError);
+          uploadErrors.set(fileId, {
+            code: 'DIR_CREATE_ERROR',
+            message: `Cannot create directory: ${dirError.message}`,
+            timestamp: new Date().toISOString()
+          });
+          
+          return sendErrorResponse(
+            res,
+            500,
+            `Failed to create output directory: ${dirError.message}`,
+            dirError.stack,
+            'DIR_CREATE_ERROR'
+          );
         }
         
         const finalFilePath = path.join(outputDir, fileName);
@@ -330,72 +350,109 @@ const server = http.createServer((req, res) => {
         const writeStreamOptions = getWriteStreamOptions(clientSpeed, chunkSize);
         
         // Initialize the write stream with dynamically calculated performance settings
-        uploadTracker.set(fileId, {
-          finalPath: finalFilePath,
-          receivedChunks: new Set(),
-          writeStream: fs.createWriteStream(finalFilePath, writeStreamOptions),
-          totalChunks: totalChunks,
-          createdAt: Date.now(),
-          lastActivity: Date.now(),
-          clientSpeed: clientSpeed,
-          // Set a dynamic timeout for uploads based on file size
-          timeout: setTimeout(() => {
+        try {
+          const writeStream = fs.createWriteStream(finalFilePath, writeStreamOptions);
+          
+          // Add explicit error handler to the write stream
+          writeStream.on('error', (writeError) => {
+            console.error(`Write stream error for ${fileId}:`, writeError);
+            uploadErrors.set(fileId, {
+              code: 'WRITE_STREAM_ERROR',
+              message: `File write error: ${writeError.message}`,
+              details: writeError.stack,
+              timestamp: new Date().toISOString()
+            });
+          });
+          
+          uploadTracker.set(fileId, {
+            finalPath: finalFilePath,
+            receivedChunks: new Set(),
+            writeStream: writeStream,
+            totalChunks: totalChunks,
+            createdAt: Date.now(),
+            lastActivity: Date.now(),
+            clientSpeed: clientSpeed,
+            // Set a dynamic timeout for uploads based on file size
+            timeout: setTimeout(() => {
+              const upload = uploadTracker.get(fileId);
+              if (upload && upload.writeStream) {
+                upload.writeStream.end();
+                console.log(`Upload timeout for ${fileId}`);
+                
+                // Record timeout error
+                uploadErrors.set(fileId, {
+                  code: 'UPLOAD_TIMEOUT',
+                  message: 'Upload timed out due to inactivity',
+                  timestamp: new Date().toISOString()
+                });
+              }
+              uploadTracker.delete(fileId);
+            }, uploadTimeout)
+          });
+          
+          console.log(`New upload started: ${fileName} (${fileId})`);
+          
+          // Respond immediately for the first chunk to avoid client waiting
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            message: 'Upload session initialized',
+            fileId: fileId
+          }));
+          
+          // Process the data after response has been sent
+          req.on('data', (chunk) => {
+            // Process data chunks as they come
             const upload = uploadTracker.get(fileId);
             if (upload && upload.writeStream) {
-              upload.writeStream.end();
-              console.log(`Upload timeout for ${fileId}`);
+              upload.writeStream.write(chunk);
             }
-            uploadTracker.delete(fileId);
-          }, uploadTimeout)
-        });
-        
-        console.log(`New upload started: ${fileName} (${fileId})`);
-        
-        // Respond immediately for the first chunk to avoid client waiting
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          success: true,
-          message: 'Upload session initialized',
-          fileId: fileId
-        }));
-        
-        // Process the data after response has been sent
-        req.on('data', (chunk) => {
-          // Process data chunks as they come
-          const upload = uploadTracker.get(fileId);
-          if (upload && upload.writeStream) {
-            upload.writeStream.write(chunk);
-          }
-        });
-        
-        // Store reference to the socket close handler to properly clean it up
-        const socketCloseHandler = () => {
-          console.log(`Client disconnected during first chunk upload of ${fileId}`);
+          });
           
-          // Clean up if we haven't finished writing
-          const upload = uploadTracker.get(fileId);
-          if (upload && !upload.receivedChunks.has(0)) {
-            clearTimeout(upload.timeout);
-            uploadTracker.delete(fileId);
-          }
-        };
-        
-        // Add handler for client disconnection
-        req.socket.on('close', socketCloseHandler);
-        
-        req.on('end', () => {
-          const upload = uploadTracker.get(fileId);
-          if (upload) {
-            upload.receivedChunks.add(chunkIndex);
-            console.log(`Chunk ${chunkIndex} processed for ${fileId}`);
-          }
+          // Store reference to the socket close handler to properly clean it up
+          const socketCloseHandler = () => {
+            console.log(`Client disconnected during first chunk upload of ${fileId}`);
+            
+            // Clean up if we haven't finished writing
+            const upload = uploadTracker.get(fileId);
+            if (upload && !upload.receivedChunks.has(0)) {
+              clearTimeout(upload.timeout);
+              uploadTracker.delete(fileId);
+            }
+          };
           
-          // Remove the socket close handler to prevent memory leaks
-          req.socket.removeListener('close', socketCloseHandler);
-        });
-        
-        // Early return since we've already sent the response
-        return;
+          // Add handler for client disconnection
+          req.socket.on('close', socketCloseHandler);
+          
+          req.on('end', () => {
+            const upload = uploadTracker.get(fileId);
+            if (upload) {
+              upload.receivedChunks.add(chunkIndex);
+              console.log(`Chunk ${chunkIndex} processed for ${fileId}`);
+            }
+            
+            // Remove the socket close handler to prevent memory leaks
+            req.socket.removeListener('close', socketCloseHandler);
+          });
+          
+          // Early return since we've already sent the response
+          return;
+        } catch (writeError) {
+          console.error(`Error creating write stream for ${finalFilePath}:`, writeError);
+          uploadErrors.set(fileId, {
+            code: 'STREAM_CREATE_ERROR',
+            message: `Cannot create file: ${writeError.message}`,
+            timestamp: new Date().toISOString()
+          });
+          
+          return sendErrorResponse(
+            res,
+            500,
+            `Failed to create output file: ${writeError.message}`,
+            writeError.stack,
+            'STREAM_CREATE_ERROR'
+          );
+        }
       }
       
       // Get the upload tracker for this file
@@ -466,18 +523,67 @@ const server = http.createServer((req, res) => {
             if (upload && upload.streamClosed) {
               console.log(`Reopening stream for ${fileId}`);
               
-              // Reopen write stream in append mode
-              upload.writeStream = fs.createWriteStream(upload.finalPath, {
-                highWaterMark: HIGH_WATER_MARK,
-                lowWaterMark: LOW_WATER_MARK,
-                flags: 'a', // Append mode
-                autoClose: false,
-                encoding: null
-              });
-              
-              upload.streamClosed = false;
+              try {
+                // Reopen write stream in append mode
+                upload.writeStream = fs.createWriteStream(upload.finalPath, {
+                  highWaterMark: systemConfig.getHighWaterMark(upload.clientSpeed),
+                  lowWaterMark: systemConfig.getLowWaterMark(systemConfig.getHighWaterMark(upload.clientSpeed)),
+                  flags: 'a', // Append mode
+                  autoClose: false,
+                  encoding: null
+                });
+                
+                // Add error handler to the reopened stream
+                upload.writeStream.on('error', (writeError) => {
+                  console.error(`Write stream error for ${fileId} after reopening:`, writeError);
+                  uploadErrors.set(fileId, {
+                    code: 'WRITE_STREAM_ERROR_REOPENED',
+                    message: `File write error after reopening: ${writeError.message}`,
+                    details: writeError.stack,
+                    timestamp: new Date().toISOString()
+                  });
+                });
+                
+                upload.streamClosed = false;
+              } catch (reopenError) {
+                console.error(`Error reopening write stream for ${fileId}:`, reopenError);
+                uploadErrors.set(fileId, {
+                  code: 'STREAM_REOPEN_ERROR',
+                  message: `Cannot reopen file: ${reopenError.message}`,
+                  chunkIndex: chunkIndex,
+                  timestamp: new Date().toISOString()
+                });
+                
+                if (!res.headersSent) {
+                  sendErrorResponse(
+                    res,
+                    500,
+                    `Failed to reopen output file: ${reopenError.message}`,
+                    reopenError.stack,
+                    'STREAM_REOPEN_ERROR'
+                  );
+                }
+                return;
+              }
             } else {
               console.error(`Upload tracker missing for ${fileId}, chunk ${chunkIndex}`);
+              
+              uploadErrors.set(fileId, {
+                code: 'MISSING_UPLOAD_TRACKER',
+                message: 'Upload tracker was lost',
+                chunkIndex: chunkIndex,
+                timestamp: new Date().toISOString()
+              });
+              
+              if (!res.headersSent) {
+                sendErrorResponse(
+                  res,
+                  500,
+                  'Upload session lost - please restart upload',
+                  null,
+                  'MISSING_UPLOAD_TRACKER'
+                );
+              }
               return;
             }
           }
@@ -568,6 +674,14 @@ const server = http.createServer((req, res) => {
       req.on('error', (error) => {
         console.error(`Chunk upload error for ${fileId}, chunk ${chunkIndex}:`, error);
         
+        // Record the error for client to retrieve
+        uploadErrors.set(fileId, {
+          code: error.code || 'UPLOAD_ERROR',
+          message: error.message || 'Unknown upload error',
+          chunkIndex: chunkIndex,
+          timestamp: new Date().toISOString()
+        });
+        
         // For connection reset errors, just log and keep the upload tracker active
         if (error.code === 'ECONNRESET') {
           console.log(`Connection reset detected for ${fileId}, chunk ${chunkIndex}. Upload can be resumed.`);
@@ -621,6 +735,16 @@ const server = http.createServer((req, res) => {
       });
     } catch (error) {
       console.error('Error in chunk upload:', error);
+      
+      // Record the error for future client retrieval
+      if (fileId) {
+        uploadErrors.set(fileId, {
+          code: error.code || 'SERVER_ERROR',
+          message: error.message || 'Unknown server error',
+          timestamp: new Date().toISOString()
+        });
+      }
+      
       sendErrorResponse(
         res, 
         500, 
@@ -821,6 +945,8 @@ const server = http.createServer((req, res) => {
     
     // Check if we have this upload in our tracker
     const upload = uploadTracker.get(fileId);
+    const error = uploadErrors.get(fileId);
+    
     if (upload) {
       // Upload session exists
       res.writeHead(200);
@@ -829,7 +955,8 @@ const server = http.createServer((req, res) => {
         exists: true,
         receivedChunks: Array.from(upload.receivedChunks),
         totalChunks: upload.totalChunks,
-        fileName: path.basename(upload.finalPath)
+        fileName: path.basename(upload.finalPath),
+        error: error || null  // Include any error information
       }));
     } else {
       // Check if we have a temp directory for this upload
@@ -845,24 +972,68 @@ const server = http.createServer((req, res) => {
             success: true,
             exists: true,
             tempOnly: true,
-            chunkCount: chunkFiles.length
+            chunkCount: chunkFiles.length,
+            error: error || null  // Include any error information
           }));
         } catch (error) {
           res.writeHead(500);
           res.end(JSON.stringify({
             success: false,
-            error: 'Error reading temp directory'
+            error: 'Error reading temp directory',
+            details: error.message
           }));
         }
       } else {
-        // Upload doesn't exist
-        res.writeHead(200);
-        res.end(JSON.stringify({
-          success: true,
-          exists: false
-        }));
+        // Check if we have an error record for this upload
+        if (error) {
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            success: false,
+            exists: false,
+            error: error
+          }));
+        } else {
+          // Upload doesn't exist and no error recorded
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            success: true,
+            exists: false
+          }));
+        }
       }
     }
+  }
+  
+  // New endpoint to directly report upload errors
+  else if (req.method === 'GET' && pathname === '/report-upload-error') {
+    const fileId = query.fileId;
+    const errorMessage = query.message || 'Client reported error';
+    const errorCode = query.code || 'CLIENT_ERROR';
+    const chunkIndex = query.chunkIndex ? parseInt(query.chunkIndex, 10) : undefined;
+    
+    if (!fileId) {
+      res.writeHead(400);
+      return res.end(JSON.stringify({ 
+        success: false, 
+        error: 'Missing fileId parameter' 
+      }));
+    }
+    
+    // Record the client-reported error
+    uploadErrors.set(fileId, {
+      code: errorCode,
+      message: errorMessage,
+      chunkIndex: chunkIndex,
+      clientReported: true,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Respond with success
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      success: true,
+      message: 'Error reported successfully'
+    }));
   }
   
   // Serve static files from the public directory
@@ -930,6 +1101,7 @@ process.on('SIGINT', () => {
     clearTimeout(upload.timeout);
   }
   uploadTracker.clear();
+  uploadErrors.clear();
   process.exit(0);
 });
 
@@ -953,6 +1125,7 @@ setInterval(() => {
       }
       clearTimeout(upload.timeout);
       uploadTracker.delete(fileId);
+      uploadErrors.delete(fileId);  // Clean up error records too
     }
     // Close idle write streams to free up file descriptors
     else {
@@ -978,6 +1151,14 @@ setInterval(() => {
           streamClosed: true
         });
       }
+    }
+  }
+  
+  // Also clean up old error records
+  for (const [fileId, error] of uploadErrors.entries()) {
+    if (now - new Date(error.timestamp).getTime() > 24 * 60 * 60 * 1000) {
+      // Remove error records older than 24 hours
+      uploadErrors.delete(fileId);
     }
   }
 }, 60 * 60 * 1000);
@@ -1038,6 +1219,17 @@ function combineChunks(chunkDir, totalChunks, outputStream) {
       // Handle errors
       readStream.on('error', (err) => {
         console.error(`Error reading chunk ${currentChunk}:`, err);
+        
+        // Record the error
+        if (fileId) {
+          uploadErrors.set(fileId, {
+            code: 'READ_ERROR',
+            message: `Failed to read chunk ${currentChunk}: ${err.message}`,
+            chunkIndex: currentChunk,
+            timestamp: new Date().toISOString()
+          });
+        }
+        
         reject(err);
       });
       
