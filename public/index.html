@@ -1227,14 +1227,67 @@
     });
     
     function uploadFile() {
-      const file = document.getElementById('fileInput').files[0];
+      console.log('uploadFile function called');
+      
+      // Check for undefined global variables
+      console.log('Variable check:', {
+        isUploadingDefined: typeof isUploading !== 'undefined',
+        uploadSpeeds: typeof uploadSpeeds !== 'undefined' ? `Array with ${uploadSpeeds?.length} items` : 'undefined',
+        speedSamples: typeof speedSamples !== 'undefined' ? `Array with ${speedSamples?.length} items` : 'undefined',
+        SPEED_WINDOW_SIZE: typeof SPEED_WINDOW_SIZE !== 'undefined' ? SPEED_WINDOW_SIZE : 'undefined',
+        connectionType: typeof connectionType !== 'undefined' ? connectionType : 'undefined',
+        systemMemory: typeof systemMemory !== 'undefined' ? systemMemory : 'undefined',
+        uploadPerformance: typeof uploadPerformance !== 'undefined' ? `Array length ${uploadPerformance?.length}` : 'undefined',
+      });
+      
+      // Set defaults for any missing values
+      if (typeof uploadPerformance === 'undefined') {
+        console.log('Creating uploadPerformance array');
+        window.uploadPerformance = [];
+      }
+      
+      if (typeof speedSamples === 'undefined') {
+        console.log('Creating speedSamples array');
+        window.speedSamples = [];
+      }
+      
+      if (typeof SPEED_WINDOW_SIZE === 'undefined') {
+        console.log('Setting SPEED_WINDOW_SIZE default');
+        window.SPEED_WINDOW_SIZE = 10;
+      }
+      
+      if (typeof adaptationFrequency === 'undefined') {
+        console.log('Setting adaptationFrequency default');
+        window.adaptationFrequency = 3;
+      }
+      
+      // Now continue with the upload process
+      const fileInput = document.getElementById('fileInput');
+      console.log('fileInput exists:', !!fileInput);
+      console.log('fileInput.files:', fileInput.files);
+      
+      const file = fileInput.files[0];
       if (!file) {
+        console.log('No file selected');
         showToast('Please select a file first!', 'error');
         return;
       }
 
+      console.log('Starting upload for file:', file.name, 'size:', file.size);
+      
       // Store the file name for potential recovery
       uploadingFileName = file.name;
+
+      // Get target path for upload
+      const targetPath = document.getElementById('targetPath').value;
+      console.log('Upload target path:', targetPath);
+      
+      // Verify we have a valid target path
+      if (!targetPath) {
+        console.error('No target path specified for upload');
+        showToast('No upload path selected!', 'error');
+        return;
+      }
 
       // Adaptive initial chunk size
       optimalChunkSize = determineInitialChunkSize(file.size);
@@ -1283,8 +1336,20 @@
       document.getElementById('uploadInfo').innerHTML = 
         `<i class="fas fa-info-circle"></i> <span class="inline-status">Starting upload of ${formatSize(file.size)}...</span>`;
       
+      console.log('Before starting upload, verifying variables:');
+      console.log('optimalChunkSize:', optimalChunkSize);
+      console.log('totalChunks:', totalChunks);
+      console.log('currentChunk:', currentChunk);
+      console.log('isUploading:', isUploading);
+      
       // Start the upload immediately without delay
-      uploadChunk(file);
+      try {
+        uploadChunk(file);
+        console.log('uploadChunk called successfully');
+      } catch (error) {
+        console.error('Error calling uploadChunk:', error);
+        showToast('Failed to start upload: ' + error.message, 'error');
+      }
     }
 
     // Determine the best initial chunk size based on all available information
@@ -1516,13 +1581,17 @@
     }
     
     function uploadChunk(file, fileId = null) {
+      console.log('uploadChunk called', { currentChunk, totalChunks, fileId });
+      
       if (chunkUploadAborted) {
+        console.log('Upload aborted, stopping chunk upload');
         isUploading = false;
         updateProgress();
         return;
       }
 
       if (currentChunk >= totalChunks) {
+        console.log('All chunks uploaded successfully');
         showToast('Upload complete!', 'success');
         isUploading = false;
         updateProgress();
@@ -1538,6 +1607,7 @@
       function sendNextChunk() {
         // Increment the chunk counter for the next chunk
         currentChunk++;
+        console.log('Moving to next chunk:', currentChunk);
         
         // Adapt chunk size for next chunk if enabled
         if (adaptiveAdjustmentEnabled && currentChunk < totalChunks) {
@@ -1556,6 +1626,13 @@
       const end = Math.min(file.size, start + optimalChunkSize);
       const chunk = file.slice(start, end);
       const chunkSize = end - start;
+      
+      console.log(`Preparing chunk ${currentChunk + 1}/${totalChunks}`, { 
+        start, 
+        end, 
+        chunkSize,
+        fileSize: file.size
+      });
 
       // Update progress immediately to show we're starting this chunk
       document.getElementById('uploadInfo').innerHTML = 
@@ -1564,250 +1641,290 @@
       // Record the start time for this chunk
       const chunkStartTime = Date.now();
 
-      // Create FormData
-      const formData = new FormData();
-      const tempFileName = file.name + '.' + Date.now();
-      formData.append('file', chunk, tempFileName);
+      try {
+        // Create FormData
+        const formData = new FormData();
+        const tempFileName = file.name + '.' + Date.now();
+        formData.append('file', chunk, tempFileName);
+        console.log('FormData created successfully with temp file name:', tempFileName);
       
-      // Prepare upload
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/upload-chunk', true);
-      
-      // Set headers for chunked upload
-      xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
-      xhr.setRequestHeader('X-Chunk-Index', currentChunk);
-      xhr.setRequestHeader('X-Total-Chunks', totalChunks);
-      
-      // Include adaptive information for server optimization
-      xhr.setRequestHeader('X-Client-Speed', speedSamples.length ? 
-        Math.round(speedSamples.slice(-3).reduce((a,b) => a+b, 0) / 
-        Math.min(3, speedSamples.length)) : 0);
-      xhr.setRequestHeader('X-Chunk-Size', chunkSize);
-      
-      // If it's not the first chunk, use the fileId
-      if (fileId) {
-        xhr.setRequestHeader('X-File-Id', fileId);
-      }
+        // Prepare upload
+        const xhr = new XMLHttpRequest();
+        
+        // Get the target path from the hidden input
+        const targetPath = document.getElementById('targetPath').value;
+        console.log('Using target path for upload:', targetPath);
+        
+        // Build the URL including target path
+        const uploadUrl = `/upload-chunk?path=${encodeURIComponent(targetPath || '/')}`;
+        console.log('Opening XHR connection to', uploadUrl);
+        
+        xhr.open('POST', uploadUrl, true);
+        
+        // Set headers for chunked upload
+        xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+        xhr.setRequestHeader('X-Chunk-Index', currentChunk);
+        xhr.setRequestHeader('X-Total-Chunks', totalChunks);
+        
+        // Include adaptive information for server optimization
+        const avgSpeed = speedSamples.length ? 
+          Math.round(speedSamples.slice(-3).reduce((a,b) => a+b, 0) / 
+          Math.min(3, speedSamples.length)) : 0;
+          
+        xhr.setRequestHeader('X-Client-Speed', avgSpeed);
+        xhr.setRequestHeader('X-Chunk-Size', chunkSize);
+        
+        console.log('XHR headers set:', {
+          'X-File-Name': encodeURIComponent(file.name),
+          'X-Chunk-Index': currentChunk,
+          'X-Total-Chunks': totalChunks,
+          'X-Client-Speed': avgSpeed,
+          'X-Chunk-Size': chunkSize
+        });
+        
+        // If it's not the first chunk, use the fileId
+        if (fileId) {
+          xhr.setRequestHeader('X-File-Id', fileId);
+          console.log('Setting X-File-Id header:', fileId);
+        }
 
-      // Store the current chunk we're working on for potential resume
-      const chunkIndex = currentChunk;
-      
-      // Set a longer timeout for large chunks
-      xhr.timeout = 60000; // 60 seconds timeout
-      
-      // Handle progress events
-      xhr.upload.onprogress = function(e) {
-        if (e.lengthComputable) {
-          // Update heartbeat timestamp on progress
-          lastProgressTime = Date.now();
-          
-          // Calculate progress of this chunk
-          const chunkProgress = e.loaded / e.total;
-          
-          // Calculate total uploaded bytes (completed chunks + current progress)
-          const completedChunksBytes = currentChunk * optimalChunkSize;
-          const currentChunkBytes = chunkSize * chunkProgress;
-          uploadedBytes = completedChunksBytes + currentChunkBytes;
-          
-          // Capture instantaneous upload speed
-          const now = Date.now();
-          if (now - lastUIUpdate >= 500) { // Update UI every 500ms
-            const timeDiff = (now - uploadStartTime) / 1000; // in seconds
-            const bytesChanged = uploadedBytes - lastChunkBytes;
-            
-            if (bytesChanged > 0 && timeDiff > 0) {
-              // Get instantaneous speed (bytes per second)
-              const speed = bytesChanged / timeDiff;
-              
-              // Only include realistic values (discard connection blips)
-              if (speed > 1024 && speed < 1000 * 1024 * 1024) { // Between 1KB/s and 1GB/s
-                uploadSpeeds.push(speed);
-                // Keep only the most recent samples for moving average
-                if (uploadSpeeds.length > SPEED_WINDOW_SIZE) {
-                  uploadSpeeds.shift();
-                }
-                
-                // Add to speed samples for adaptive decision making
-                speedSamples.push(speed);
-                if (speedSamples.length > 20) { // Keep last 20 samples for trend analysis
-                  speedSamples.shift();
-                }
-              }
+        // Store the current chunk we're working on for potential resume
+        const chunkIndex = currentChunk;
+        
+        // Set a longer timeout for large chunks
+        xhr.timeout = 60000; // 60 seconds timeout
+        
+        // Handle progress events
+        xhr.upload.onprogress = function(e) {
+          if (e.lengthComputable) {
+            // Basic progress logging (only every few %)
+            const percent = Math.round((e.loaded / e.total) * 100);
+            if (percent % 10 === 0) {
+              console.log(`Chunk ${chunkIndex} upload progress: ${percent}%`);
             }
             
-            // Update progress
-            updateProgress();
+            // Update heartbeat timestamp on progress
+            lastProgressTime = Date.now();
             
-            // Reset for next speed calculation
-            lastChunkBytes = uploadedBytes;
-            uploadStartTime = now;
-            lastUIUpdate = now;
+            // Calculate progress of this chunk
+            const chunkProgress = e.loaded / e.total;
+            
+            // Calculate total uploaded bytes (completed chunks + current progress)
+            const completedChunksBytes = currentChunk * optimalChunkSize;
+            const currentChunkBytes = chunkSize * chunkProgress;
+            uploadedBytes = completedChunksBytes + currentChunkBytes;
+            
+            // Capture instantaneous upload speed
+            const now = Date.now();
+            if (now - lastUIUpdate >= 500) { // Update UI every 500ms
+              const timeDiff = (now - uploadStartTime) / 1000; // in seconds
+              const bytesChanged = uploadedBytes - lastChunkBytes;
+              
+              if (bytesChanged > 0 && timeDiff > 0) {
+                // Get instantaneous speed (bytes per second)
+                const speed = bytesChanged / timeDiff;
+                
+                // Only include realistic values (discard connection blips)
+                if (speed > 1024 && speed < 1000 * 1024 * 1024) { // Between 1KB/s and 1GB/s
+                  uploadSpeeds.push(speed);
+                  // Keep only the most recent samples for moving average
+                  if (uploadSpeeds.length > SPEED_WINDOW_SIZE) {
+                    uploadSpeeds.shift();
+                  }
+                  
+                  // Add to speed samples for adaptive decision making
+                  speedSamples.push(speed);
+                  if (speedSamples.length > 20) { // Keep last 20 samples for trend analysis
+                    speedSamples.shift();
+                  }
+                }
+              }
+              
+              // Update progress
+              updateProgress();
+              
+              // Reset for next speed calculation
+              lastChunkBytes = uploadedBytes;
+              uploadStartTime = now;
+              lastUIUpdate = now;
+            }
           }
-        }
-      };
-      
-      // Handle errors
-      xhr.onerror = function(e) {
-        console.error(`Error uploading chunk ${chunkIndex}:`, e);
-        lastProgressTime = Date.now(); // Update heartbeat
+        };
         
-        // Track failed performance
-        trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, Date.now(), false);
-        
-        handleUploadError(xhr, file, fileId, 'Network error occurred', {
-          type: 'network_error',
-          details: e.message || 'Unknown network error',
-          timestamp: new Date().toISOString(),
-          chunkIndex: chunkIndex
-        });
-      };
-      
-      // Handle timeout
-      xhr.ontimeout = function(e) {
-        console.error(`Timeout uploading chunk ${chunkIndex}:`, e);
-        lastProgressTime = Date.now(); // Update heartbeat
-        
-        // Track failed performance
-        trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, Date.now(), false);
-        
-        handleUploadError(xhr, file, fileId, 'Request timed out', {
-          type: 'timeout',
-          details: 'Connection timed out after 60 seconds',
-          timestamp: new Date().toISOString(),
-          chunkIndex: chunkIndex
-        });
-      };
-      
-      xhr.onabort = function(e) {
-        console.warn(`Upload aborted for chunk ${chunkIndex}`);
-        lastProgressTime = Date.now(); // Update heartbeat
-        
-        if (!chunkUploadAborted) {
-          // This was not an intentional abort, handle as error
-          handleUploadError(xhr, file, fileId, 'Upload was aborted', {
-            type: 'abort',
-            details: 'Connection was aborted unexpectedly',
+        // Handle errors
+        xhr.onerror = function(e) {
+          console.error(`Error uploading chunk ${chunkIndex}:`, e);
+          lastProgressTime = Date.now(); // Update heartbeat
+          
+          // Track failed performance
+          trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, Date.now(), false);
+          
+          handleUploadError(xhr, file, fileId, 'Network error occurred', {
+            type: 'network_error',
+            details: e.message || 'Unknown network error',
             timestamp: new Date().toISOString(),
             chunkIndex: chunkIndex
           });
-        }
-      };
-      
-      xhr.onload = function() {
-        // Record end time for performance tracking
-        const chunkEndTime = Date.now();
+        };
         
-        // Update heartbeat timestamp
-        lastProgressTime = Date.now();
+        // Handle timeout
+        xhr.ontimeout = function(e) {
+          console.error(`Timeout uploading chunk ${chunkIndex}:`, e);
+          lastProgressTime = Date.now(); // Update heartbeat
+          
+          // Track failed performance
+          trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, Date.now(), false);
+          
+          handleUploadError(xhr, file, fileId, 'Request timed out', {
+            type: 'timeout',
+            details: 'Connection timed out after 60 seconds',
+            timestamp: new Date().toISOString(),
+            chunkIndex: chunkIndex
+          });
+        };
         
-        if (xhr.status === 200) {
-          try {
-            const response = JSON.parse(xhr.responseText);
-            
-            if (!response.success) {
-              // Server returned an error with 200 status code but success=false
-              const errorDetails = {
-                code: response.error?.code || 'SERVER_ERROR',
-                details: response.error?.message || response.error || 'Unknown server error',
-                timestamp: new Date().toISOString(),
-                chunkIndex: chunkIndex
-              };
-              console.error('Server returned error:', errorDetails);
+        xhr.onabort = function(e) {
+          console.warn(`Upload aborted for chunk ${chunkIndex}`);
+          lastProgressTime = Date.now(); // Update heartbeat
+          
+          if (!chunkUploadAborted) {
+            // This was not an intentional abort, handle as error
+            handleUploadError(xhr, file, fileId, 'Upload was aborted', {
+              type: 'abort',
+              details: 'Connection was aborted unexpectedly',
+              timestamp: new Date().toISOString(),
+              chunkIndex: chunkIndex
+            });
+          }
+        };
+        
+        xhr.onload = function() {
+          // Record end time for performance tracking
+          const chunkEndTime = Date.now();
+          
+          // Update heartbeat timestamp
+          lastProgressTime = Date.now();
+          
+          if (xhr.status === 200) {
+            try {
+              const response = JSON.parse(xhr.responseText);
+              console.log(`Received response for chunk ${chunkIndex}:`, response);
+              
+              if (!response.success) {
+                // Server returned an error with 200 status code but success=false
+                const errorDetails = {
+                  code: response.error?.code || 'SERVER_ERROR',
+                  details: response.error?.message || response.error || 'Unknown server error',
+                  timestamp: new Date().toISOString(),
+                  chunkIndex: chunkIndex
+                };
+                console.error('Server returned error:', errorDetails);
+                
+                // Track failed performance
+                trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, chunkEndTime, false);
+                
+                handleUploadError(xhr, file, fileId, response.error?.message || 'Server error', errorDetails);
+                return;
+              }
+              
+              // Store the fileId from the first chunk response
+              if (chunkIndex === 0) {
+                uploadedFileId = response.fileId;
+                console.log(`Got fileId from server: ${uploadedFileId}`);
+              }
+              
+              // Track performance of this chunk
+              trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, chunkEndTime, true);
+              
+              // Calculate and store MD5 hash of this chunk for verification if needed
+              calculateMD5(chunk).then(hash => {
+                uploadChecksums[chunkIndex] = hash;
+                console.log(`Chunk ${chunkIndex} MD5: ${hash}`);
+              }).catch(err => {
+                console.warn(`Could not calculate MD5 for chunk ${chunkIndex}:`, err);
+              });
+              
+              // If this is the last chunk or we got a filePath in the response
+              if (response.filePath || currentChunk === totalChunks - 1) {
+                console.log(`Upload of ${file.name} completed!`);
+                
+                // Clean up heartbeat
+                if (uploadHeartbeatInterval) {
+                  clearInterval(uploadHeartbeatInterval);
+                  uploadHeartbeatInterval = null;
+                }
+                
+                // End upload process
+                isUploading = false;
+                showToast(`Upload of ${file.name} completed successfully!`, 'success');
+                
+                // Update info with completion message in single-line format
+                document.getElementById('uploadInfo').innerHTML = 
+                  `<i class="fas fa-check-circle"></i> <span class="inline-status">Upload complete</span><span class="status-divider">|</span><span class="inline-status">${formatSize(file.size)} uploaded</span>`;
+                
+                // Reset UI
+                updateUploadButtonState(false);
+                
+                // Refresh file list
+                const urlParams = new URLSearchParams(window.location.search);
+                loadFileList(urlParams.get('path') || '');
+                
+                return;
+              }
+              
+              // Continue with next chunk
+              sendNextChunk();
+            } catch (error) {
+              console.error('Error parsing response:', error);
               
               // Track failed performance
               trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, chunkEndTime, false);
               
-              handleUploadError(xhr, file, fileId, response.error?.message || 'Server error', errorDetails);
-              return;
+              handleUploadError(xhr, file, fileId, 'Failed to parse server response', {
+                error: error,
+                chunkIndex: chunkIndex
+              });
             }
-            
-            // Store the fileId from the first chunk response
-            if (chunkIndex === 0) {
-              uploadedFileId = response.fileId;
-              console.log(`Got fileId from server: ${uploadedFileId}`);
-            }
-            
-            // Track performance of this chunk
-            trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, chunkEndTime, true);
-            
-            // Calculate and store MD5 hash of this chunk for verification if needed
-            calculateMD5(chunk).then(hash => {
-              uploadChecksums[chunkIndex] = hash;
-              console.log(`Chunk ${chunkIndex} MD5: ${hash}`);
-            }).catch(err => {
-              console.warn(`Could not calculate MD5 for chunk ${chunkIndex}:`, err);
-            });
-            
-            // If this is the last chunk or we got a filePath in the response
-            if (response.filePath || currentChunk === totalChunks - 1) {
-              console.log(`Upload of ${file.name} completed!`);
-              
-              // Clean up heartbeat
-              if (uploadHeartbeatInterval) {
-                clearInterval(uploadHeartbeatInterval);
-                uploadHeartbeatInterval = null;
-              }
-              
-              // End upload process
-              isUploading = false;
-              showToast(`Upload of ${file.name} completed successfully!`, 'success');
-              
-              // Update info with completion message in single-line format
-              document.getElementById('uploadInfo').innerHTML = 
-                `<i class="fas fa-check-circle"></i> <span class="inline-status">Upload complete</span><span class="status-divider">|</span><span class="inline-status">${formatSize(file.size)} uploaded</span>`;
-              
-              // Reset UI
-              updateUploadButtonState(false);
-              
-              // Refresh file list
-              const urlParams = new URLSearchParams(window.location.search);
-              loadFileList(urlParams.get('path') || '');
-              
-              return;
-            }
-            
-            // Continue with next chunk
-            sendNextChunk();
-          } catch (error) {
-            console.error('Error parsing response:', error);
+          } else {
+            // Server error
+            console.error(`Server returned status ${xhr.status} for chunk ${chunkIndex}`);
             
             // Track failed performance
             trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, chunkEndTime, false);
             
-            handleUploadError(xhr, file, fileId, 'Failed to parse server response', {
-              error: error,
-              chunkIndex: chunkIndex
-            });
+            // Try to parse response to get error details
+            let errorDetails = {
+              status: xhr.status,
+              chunkIndex: chunkIndex,
+              timestamp: new Date().toISOString()
+            };
+            
+            try {
+              const response = JSON.parse(xhr.responseText);
+              errorDetails.message = response.error || 'Server error';
+              errorDetails.code = response.code;
+              errorDetails.details = response.details;
+            } catch (e) {
+              errorDetails.message = xhr.statusText || 'Server error';
+              errorDetails.responseText = xhr.responseText;
+            }
+            
+            handleUploadError(xhr, file, fileId, `Server error: ${xhr.status}`, errorDetails);
           }
-        } else {
-          // Server error
-          console.error(`Server returned status ${xhr.status} for chunk ${chunkIndex}`);
-          
-          // Track failed performance
-          trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, chunkEndTime, false);
-          
-          // Try to parse response to get error details
-          let errorDetails = {
-            status: xhr.status,
-            chunkIndex: chunkIndex,
-            timestamp: new Date().toISOString()
-          };
-          
-          try {
-            const response = JSON.parse(xhr.responseText);
-            errorDetails.message = response.error || 'Server error';
-            errorDetails.code = response.code;
-            errorDetails.details = response.details;
-          } catch (e) {
-            errorDetails.message = xhr.statusText || 'Server error';
-            errorDetails.responseText = xhr.responseText;
-          }
-          
-          handleUploadError(xhr, file, fileId, `Server error: ${xhr.status}`, errorDetails);
-        }
-      };
-      
-      xhr.send(formData);
+        };
+        
+        console.log('Sending XHR request with FormData');
+        xhr.send(formData);
+        console.log('XHR request sent');
+      } catch (error) {
+        console.error('Error setting up chunk upload:', error);
+        handleUploadError(null, file, fileId, 'Failed to prepare upload', {
+          type: 'setup_error',
+          details: error.message || 'Unknown error during upload setup',
+          timestamp: new Date().toISOString(),
+          chunkIndex: currentChunk
+        });
+      }
     }
     
     // Function to handle upload errors with retry logic
@@ -2259,6 +2376,75 @@
         event.returnValue = 'Upload in progress. Are you sure you want to leave?';
         return event.returnValue;
       }
+    });
+
+    // Set up event listeners
+    document.addEventListener('DOMContentLoaded', function() {
+      // Listen for file input changes
+      document.getElementById('fileInput').addEventListener('change', function(e) {
+        console.log('File input change event fired', e.target.files);
+        updateFileInfo(this);
+      });
+      
+      // Run a small speed test to determine initial network speed
+      if (navigator.onLine) {
+        runSpeedTest();
+      }
+      
+      // Add debug message
+      console.log('File upload system initialized and ready');
+      
+      // Create troubleshoot button
+      const troubleshootBtn = document.createElement('button');
+      troubleshootBtn.innerHTML = '<i class="fas fa-wrench"></i> Show Upload Form';
+      troubleshootBtn.style.position = 'fixed';
+      troubleshootBtn.style.bottom = '20px';
+      troubleshootBtn.style.right = '20px';
+      troubleshootBtn.style.zIndex = '1000';
+      troubleshootBtn.style.padding = '10px 15px';
+      troubleshootBtn.style.backgroundColor = '#3498db';
+      troubleshootBtn.style.color = 'white';
+      troubleshootBtn.style.border = 'none';
+      troubleshootBtn.style.borderRadius = '4px';
+      troubleshootBtn.style.cursor = 'pointer';
+      
+      troubleshootBtn.onclick = function() {
+        // Force select the current directory
+        if (!currentPath) {
+          currentPath = '/';
+        }
+        
+        // Create an uploads folder path
+        let uploadsPath;
+        if (currentPath === '/' || currentPath === '\\') {
+          uploadsPath = '/uploads';
+        } else {
+          uploadsPath = currentPath + '/uploads';
+        }
+        
+        console.log('Troubleshoot: Setting upload path to:', uploadsPath);
+        
+        // Create directory if it doesn't exist
+        fetch(`/list-folders?path=${encodeURIComponent(uploadsPath)}`)
+          .then(res => res.json())
+          .then(data => {
+            console.log("Directory check result:", data);
+            document.getElementById('targetPath').value = uploadsPath;
+            document.getElementById('selectedPath').textContent = `Selected: ${uploadsPath}`;
+            document.getElementById('uploadForm').style.display = 'block';
+            document.getElementById('uploadForm').scrollIntoView({ behavior: 'smooth' });
+          })
+          .catch(err => {
+            console.error("Error checking directory:", err);
+            // Still show upload form even if check fails
+            document.getElementById('targetPath').value = uploadsPath;
+            document.getElementById('selectedPath').textContent = `Selected: ${uploadsPath}`;
+            document.getElementById('uploadForm').style.display = 'block';
+            document.getElementById('uploadForm').scrollIntoView({ behavior: 'smooth' });
+          });
+      };
+      
+      document.body.appendChild(troubleshootBtn);
     });
   </script>
 </body>
