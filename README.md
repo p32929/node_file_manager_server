@@ -6,9 +6,9 @@ It comes with a **built-in file explorer** so you can **navigate directories and
 
 # Screenshots
 
-![Image](https://github.com/user-attachments/assets/733b21de-fb19-4c53-a76b-45a087fb757a)
+![Image](https://github.com/user-attachments/assets/d4d928f8-b07e-416e-9845-8102d77ca0c2)
 
-![Image](https://github.com/user-attachments/assets/9b7520a1-9abc-4717-8aa1-5a1e68dafc30)
+![Image](https://github.com/user-attachments/assets/a7f08c1c-e662-434d-afd0-40bbc55c2deb)
 
 ---
 
