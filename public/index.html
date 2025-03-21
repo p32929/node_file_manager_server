@@ -871,6 +871,28 @@
     }
 
     let xhr; // Global variable for XMLHttpRequest
+    let isUploading = false; // Flag to track upload status
+    let chunkUploadAborted = false; // Flag to track if upload was aborted
+    let currentChunk = 0; // Current chunk being uploaded
+    let totalChunks = 0; // Total number of chunks for current upload
+    const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
+    
+    // Page visibility handling
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        // Page is now hidden (user switched tabs)
+        if (isUploading) {
+          showToast('Upload continues in background. Please don\'t close this tab.', 'info');
+        }
+      } else {
+        // Page is now visible again
+        if (isUploading) {
+          showToast('Upload continuing in foreground', 'info');
+        }
+      }
+    }
     
     function uploadFile() {
       const file = document.getElementById('fileInput').files[0];
@@ -879,80 +901,142 @@
         return;
       }
 
+      // Reset state
+      currentChunk = 0;
+      totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+      chunkUploadAborted = false;
+      isUploading = true;
+
       // Disable upload button and show cancel button
       document.getElementById('uploadButton').disabled = true;
       document.getElementById('uploadButton').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
       document.getElementById('cancelButton').style.display = 'flex';
       
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('targetPath', document.getElementById('targetPath').value);
-
+      // Initialize progress display
+      document.querySelector('.progress-container').style.display = 'block';
+      document.querySelector('.progress-bar').style.width = '0%';
+      document.getElementById('uploadInfo').innerHTML = 
+        `<i class="fas fa-info-circle"></i> Preparing to upload...`;
+      
+      // Start uploading the first chunk
+      uploadNextChunk(file);
+    }
+    
+    function uploadNextChunk(file) {
+      if (chunkUploadAborted) {
+        return;
+      }
+      
+      if (currentChunk >= totalChunks) {
+        // All chunks uploaded
+        isUploading = false;
+        resetUploadUI();
+        showToast('Upload completed successfully!', 'success');
+        
+        // Reset form
+        document.getElementById('fileInput').value = '';
+        document.getElementById('fileInfo').style.display = 'none';
+        document.querySelector('.progress-container').style.display = 'none';
+        document.getElementById('uploadInfo').innerHTML = '';
+        return;
+      }
+      
+      // Prepare chunk
+      const start = currentChunk * CHUNK_SIZE;
+      const end = Math.min(file.size, start + CHUNK_SIZE);
+      const chunk = file.slice(start, end);
+      
+      // Create FormData (can't use this with our custom headers)
+      // Instead, we'll send the raw chunk
+      
+      // Send the chunk
       xhr = new XMLHttpRequest();
-      xhr.open('POST', '/upload', true);
-
-      let startTime = Date.now();
+      xhr.open('POST', '/upload-chunk', true);
+      
+      // Set headers with metadata
+      xhr.setRequestHeader('X-File-Name', file.name);
+      xhr.setRequestHeader('X-Chunk-Index', currentChunk.toString());
+      xhr.setRequestHeader('X-Total-Chunks', totalChunks.toString());
+      xhr.setRequestHeader('X-File-Path', document.getElementById('targetPath').value);
+      
+      // Track timing and progress
+      let chunkStartTime = Date.now();
       let lastLoaded = 0;
       let speedArray = [];
-
-      xhr.upload.onprogress = function (event) {
-        let percent = Math.round((event.loaded / event.total) * 100);
-        let elapsedTime = (Date.now() - startTime) / 1000;
+      
+      xhr.upload.onprogress = function(event) {
+        // Calculate progress across all chunks
+        const overallLoaded = currentChunk * CHUNK_SIZE + event.loaded;
+        const overallTotal = file.size;
+        const percent = Math.round((overallLoaded / overallTotal) * 100);
         
-        // Calculate average speed over last few seconds
+        // Calculate speed
+        let elapsedTime = (Date.now() - chunkStartTime) / 1000;
         let currentSpeed = (event.loaded - lastLoaded) / (elapsedTime > 0 ? elapsedTime : 0.1);
         lastLoaded = event.loaded;
-        startTime = Date.now();
+        chunkStartTime = Date.now();
         
+        // Maintain speed history for average
         speedArray.push(currentSpeed);
-        if (speedArray.length > 5) speedArray.shift(); // Keep last 5 readings
-        
+        if (speedArray.length > 5) speedArray.shift();
         let avgSpeed = speedArray.reduce((a, b) => a + b, 0) / speedArray.length;
-        let remainingSize = event.total - event.loaded;
+        
+        // Calculate remaining time
+        let remainingSize = overallTotal - overallLoaded;
         let estimatedTimeLeft = remainingSize / (avgSpeed > 0 ? avgSpeed : 0.1);
         
+        // Format values for display
         let speedText = formatSize(avgSpeed) + '/s';
         let remainingText = formatSize(remainingSize);
         let timeText = formatTime(estimatedTimeLeft);
-
-        document.querySelector('.progress-container').style.display = 'block';
+        let chunkText = `Chunk ${currentChunk + 1}/${totalChunks}`;
+        
+        // Update UI
         document.querySelector('.progress-bar').style.width = percent + '%';
         document.getElementById('uploadInfo').innerHTML = 
-          `<i class="fas fa-info-circle"></i> ${percent}% complete • ${speedText} • ${remainingText} remaining • ETA: ${timeText}`;
+          `<i class="fas fa-info-circle"></i> ${percent}% complete • ${chunkText} • ${speedText} • ${remainingText} remaining • ETA: ${timeText}`;
       };
-
-      xhr.onload = function () {
-        resetUploadUI();
-        
+      
+      xhr.onload = function() {
         if (xhr.status === 200) {
-          showToast('Upload completed successfully!', 'success');
-          // Reset form
-          document.getElementById('fileInput').value = '';
-          document.getElementById('fileInfo').style.display = 'none';
-          document.querySelector('.progress-container').style.display = 'none';
-          document.getElementById('uploadInfo').innerHTML = '';
+          // Chunk uploaded successfully
+          currentChunk++;
+          
+          // Small delay before next chunk to allow UI to update
+          setTimeout(() => uploadNextChunk(file), 100);
         } else {
-          showToast('Upload failed. Please try again.', 'error');
+          handleUploadError('Chunk upload failed: ' + xhr.responseText);
         }
       };
-
+      
       xhr.onerror = function() {
-        resetUploadUI();
-        showToast('Connection error. Please try again.', 'error');
+        // Check if we should retry this chunk
+        handleUploadError('Connection error during upload');
       };
-
+      
       xhr.onabort = function() {
+        isUploading = false;
+        chunkUploadAborted = true;
         resetUploadUI();
         showToast('Upload cancelled.', 'error');
         document.querySelector('.progress-container').style.display = 'none';
         document.getElementById('uploadInfo').innerHTML = '';
       };
-
-      xhr.send(formData);
+      
+      // Send the chunk data
+      xhr.send(chunk);
+    }
+    
+    function handleUploadError(message) {
+      isUploading = false;
+      resetUploadUI();
+      showToast(message, 'error');
+      document.getElementById('uploadInfo').innerHTML = '';
     }
 
     function cancelUpload() {
       if (xhr && xhr.readyState !== 4) {
+        chunkUploadAborted = true;
         xhr.abort();
       }
     }
