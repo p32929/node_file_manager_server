@@ -768,6 +768,21 @@
   </div>
 
   <script>
+    // Utility function to format file sizes
+    function formatSize(bytes) {
+      console.log('formatSize called with bytes:', bytes);
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      const result = parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+      console.log('formatSize returning:', result);
+      return result;
+    }
+
+    // Config
+    const API_BASE_URL = window.location.origin;
+    
     let currentPath = '/';
     // Track navigation history for back button
     let navigationHistory = [];
@@ -1354,6 +1369,22 @@
 
     // Determine the best initial chunk size based on all available information
     function determineInitialChunkSize(fileSize) {
+      console.log('determineInitialChunkSize called with fileSize:', fileSize);
+      
+      // Ensure formatSize function is available
+      if (typeof formatSize !== 'function') {
+        console.error('formatSize function is not defined!');
+        // Define inline if missing
+        window.formatSize = function(bytes) {
+          if (bytes === 0) return '0 B';
+          const k = 1024;
+          const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+          const i = Math.floor(Math.log(bytes) / Math.log(k));
+          return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        };
+        console.log('formatSize function defined inline as fallback');
+      }
+      
       // Start with connection type
       let baseChunkSize;
       
@@ -2396,56 +2427,53 @@
       
       // Create troubleshoot button
       const troubleshootBtn = document.createElement('button');
-      troubleshootBtn.innerHTML = '<i class="fas fa-wrench"></i> Show Upload Form';
+      troubleshootBtn.innerHTML = '<i class="fas fa-upload"></i> START UPLOAD NOW';
       troubleshootBtn.style.position = 'fixed';
-      troubleshootBtn.style.bottom = '20px';
+      troubleshootBtn.style.top = '20px';
       troubleshootBtn.style.right = '20px';
-      troubleshootBtn.style.zIndex = '1000';
-      troubleshootBtn.style.padding = '10px 15px';
-      troubleshootBtn.style.backgroundColor = '#3498db';
+      troubleshootBtn.style.zIndex = '9999';
+      troubleshootBtn.style.padding = '15px 20px';
+      troubleshootBtn.style.fontSize = '18px';
+      troubleshootBtn.style.backgroundColor = '#e74c3c';
       troubleshootBtn.style.color = 'white';
       troubleshootBtn.style.border = 'none';
       troubleshootBtn.style.borderRadius = '4px';
       troubleshootBtn.style.cursor = 'pointer';
+      troubleshootBtn.style.boxShadow = '0 4px 8px rgba(0, 0, 0, 0.2)';
       
       troubleshootBtn.onclick = function() {
-        // Force select the current directory
-        if (!currentPath) {
-          currentPath = '/';
-        }
+        // Force select a known good path - this is the default server upload path
+        const uploadsPath = '/uploads';
+        console.log('Setting upload path directly to:', uploadsPath);
         
-        // Create an uploads folder path
-        let uploadsPath;
-        if (currentPath === '/' || currentPath === '\\') {
-          uploadsPath = '/uploads';
-        } else {
-          uploadsPath = currentPath + '/uploads';
-        }
+        // Show form immediately
+        document.getElementById('targetPath').value = uploadsPath;
+        document.getElementById('selectedPath').textContent = `Selected: ${uploadsPath}`;
+        document.getElementById('uploadForm').style.display = 'block';
+        document.getElementById('uploadForm').scrollIntoView({ behavior: 'smooth' });
         
-        console.log('Troubleshoot: Setting upload path to:', uploadsPath);
-        
-        // Create directory if it doesn't exist
+        // Make a directory check request in the background, but don't wait for it
         fetch(`/list-folders?path=${encodeURIComponent(uploadsPath)}`)
           .then(res => res.json())
           .then(data => {
             console.log("Directory check result:", data);
-            document.getElementById('targetPath').value = uploadsPath;
-            document.getElementById('selectedPath').textContent = `Selected: ${uploadsPath}`;
-            document.getElementById('uploadForm').style.display = 'block';
-            document.getElementById('uploadForm').scrollIntoView({ behavior: 'smooth' });
           })
           .catch(err => {
             console.error("Error checking directory:", err);
-            // Still show upload form even if check fails
-            document.getElementById('targetPath').value = uploadsPath;
-            document.getElementById('selectedPath').textContent = `Selected: ${uploadsPath}`;
-            document.getElementById('uploadForm').style.display = 'block';
-            document.getElementById('uploadForm').scrollIntoView({ behavior: 'smooth' });
           });
       };
       
       document.body.appendChild(troubleshootBtn);
     });
+
+    // Format bytes to human-readable size
+    function formatSize(bytes) {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
   </script>
 </body>
 </html>
