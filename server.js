@@ -4,7 +4,6 @@ const path = require('path');
 const { parse } = require('url');
 const { exec } = require('child_process');
 const os = require('os');
-const rimraf = require('rimraf');
 
 // Create temp directory for chunk uploads
 const TEMP_DIR = path.join(os.tmpdir(), 'file-server-chunks');
@@ -268,6 +267,14 @@ const server = http.createServer((req, res) => {
             clearTimeout(upload.timeout);
             uploadTracker.delete(fileId);
             
+            // Clean up temp directory
+            try {
+              removeDirectory(tempDir);
+              console.log(`Cleaned up temporary directory: ${tempDir}`);
+            } catch (cleanupError) {
+              console.error('Error cleaning up temp files:', cleanupError);
+            }
+            
             // Send success response
             res.writeHead(200);
             res.end(JSON.stringify({
@@ -314,7 +321,10 @@ const server = http.createServer((req, res) => {
     
     if (!contentType || !contentType.includes('multipart/form-data')) {
       res.writeHead(400);
-      return res.end('Invalid content type, expected multipart/form-data');
+      return res.end(JSON.stringify({
+        success: false,
+        error: 'Invalid content type, expected multipart/form-data'
+      }));
     }
     
     const boundary = contentType.split('boundary=')[1];
@@ -323,45 +333,162 @@ const server = http.createServer((req, res) => {
     req.on('data', chunk => body = Buffer.concat([body, chunk]));
 
     req.on('end', () => {
-      const parts = body.toString().split('--' + boundary);
-      let fileBuffer, fileName, destPath;
-
-      parts.forEach(part => {
-        if (part.includes('name="file"')) {
-          const matches = part.match(/filename="(.+?)"/);
-          if (matches) {
-            fileName = matches[1];
-            const start = part.indexOf('\r\n\r\n') + 4;
-            const content = part.slice(start, part.lastIndexOf('\r\n'));
-            fileBuffer = Buffer.from(content, 'binary');
-          }
-        }
-        if (part.includes('name="targetPath"')) {
-          const start = part.indexOf('\r\n\r\n') + 4;
-          destPath = part.slice(start, part.lastIndexOf('\r\n')).trim();
-        }
-      });
-
-      if (!fileBuffer || !fileName || !destPath) {
-        res.writeHead(400);
-        return res.end('Missing fields');
-      }
-
-      // Create upload directory if it doesn't exist
-      if (!fs.existsSync(destPath)) {
-        fs.mkdirSync(destPath, { recursive: true });
-      }
-
-      const fullPath = path.join(destPath, fileName);
       try {
-        fs.writeFileSync(fullPath, fileBuffer);
-        res.writeHead(200);
-        res.end(`Uploaded to ${fullPath}`);
-      } catch (e) {
+        const parts = body.toString().split('--' + boundary);
+        let fileBuffer, fileName, destPath;
+  
+        parts.forEach(part => {
+          if (part.includes('name="file"')) {
+            const matches = part.match(/filename="(.+?)"/);
+            if (matches) {
+              fileName = matches[1];
+              const start = part.indexOf('\r\n\r\n') + 4;
+              const content = part.slice(start, part.lastIndexOf('\r\n'));
+              fileBuffer = Buffer.from(content, 'binary');
+            }
+          }
+          if (part.includes('name="targetPath"')) {
+            const start = part.indexOf('\r\n\r\n') + 4;
+            destPath = part.slice(start, part.lastIndexOf('\r\n')).trim();
+          }
+        });
+  
+        if (!fileBuffer || !fileName || !destPath) {
+          res.writeHead(400);
+          return res.end(JSON.stringify({
+            success: false,
+            error: 'Missing required fields'
+          }));
+        }
+  
+        // Create upload directory if it doesn't exist
+        if (!fs.existsSync(destPath)) {
+          fs.mkdirSync(destPath, { recursive: true });
+        }
+  
+        const fullPath = path.join(destPath, fileName);
+        
+        // Use write stream with performance optimizations
+        const writeStream = fs.createWriteStream(fullPath, WRITE_STREAM_OPTIONS);
+        
+        writeStream.on('error', (err) => {
+          console.error('Error writing file:', err);
+          res.writeHead(500);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Failed to save file: ' + err.message
+          }));
+        });
+        
+        writeStream.on('finish', () => {
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            success: true,
+            message: 'File uploaded successfully',
+            filePath: fullPath
+          }));
+        });
+        
+        // Write the buffer to the stream
+        writeStream.write(fileBuffer);
+        writeStream.end();
+      } catch (error) {
+        console.error('Error processing upload:', error);
         res.writeHead(500);
-        res.end('Failed to save: ' + e.message);
+        res.end(JSON.stringify({
+          success: false,
+          error: 'Server error: ' + error.message
+        }));
       }
     });
+  }
+  
+  // New endpoint for chunked upload that combines all chunks into final file
+  else if (req.method === 'POST' && pathname === '/combine-chunks') {
+    // Extract metadata from headers or query parameters
+    const fileName = req.headers['x-file-name'] || '';
+    const fileId = req.headers['x-file-id'] || '';
+    const totalChunks = parseInt(req.headers['x-total-chunks'] || '0', 10);
+    const targetPath = query.path || getCurrentPath();
+    
+    if (!fileName || !fileId || totalChunks === 0) {
+      res.writeHead(400);
+      return res.end(JSON.stringify({ 
+        success: false, 
+        error: 'Missing file information' 
+      }));
+    }
+    
+    // Check if all chunks exist
+    const tempDir = path.join(os.tmpdir(), 'file-server-chunks', fileId);
+    if (!fs.existsSync(tempDir)) {
+      res.writeHead(404);
+      return res.end(JSON.stringify({ 
+        success: false, 
+        error: 'Upload session not found' 
+      }));
+    }
+    
+    // Verify all chunks exist
+    for (let i = 0; i < totalChunks; i++) {
+      const chunkPath = path.join(tempDir, `chunk-${i}`);
+      if (!fs.existsSync(chunkPath)) {
+        res.writeHead(400);
+        return res.end(JSON.stringify({ 
+          success: false, 
+          error: `Missing chunk ${i}` 
+        }));
+      }
+    }
+    
+    // Create output directory if it doesn't exist
+    const outputDir = path.resolve(targetPath);
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+    
+    // Path for final file
+    const finalPath = path.join(outputDir, fileName);
+    
+    // Create write stream for final file
+    const outputStream = fs.createWriteStream(finalPath, WRITE_STREAM_OPTIONS);
+    
+    // Set up error handler
+    outputStream.on('error', (err) => {
+      console.error('Error writing final file:', err);
+      res.writeHead(500);
+      res.end(JSON.stringify({ 
+        success: false, 
+        error: 'Failed to write output file' 
+      }));
+    });
+    
+    // Combine all chunks
+    combineChunks(tempDir, totalChunks, outputStream)
+      .then(() => {
+        // Clean up temp directory
+        try {
+          removeDirectory(tempDir);
+        } catch (cleanupError) {
+          console.error('Error cleaning up temp files:', cleanupError);
+        }
+        
+        // Send success response
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          success: true,
+          message: 'File assembled successfully',
+          filePath: finalPath
+        }));
+      })
+      .catch((error) => {
+        console.error('Error combining chunks:', error);
+        res.writeHead(500);
+        res.end(JSON.stringify({ 
+          success: false, 
+          error: 'Failed to combine chunks' 
+        }));
+      });
   }
   
   // Serve static files from the public directory
@@ -451,6 +578,62 @@ setInterval(() => {
 // Helper function to get current path
 function getCurrentPath() {
   return process.cwd();
+}
+
+// Helper function to recursively remove directory using only fs module
+function removeDirectory(dirPath) {
+  if (fs.existsSync(dirPath)) {
+    fs.readdirSync(dirPath).forEach((file) => {
+      const curPath = path.join(dirPath, file);
+      if (fs.lstatSync(curPath).isDirectory()) {
+        // Recursive case: it's a directory
+        removeDirectory(curPath);
+      } else {
+        // Base case: it's a file
+        fs.unlinkSync(curPath);
+      }
+    });
+    fs.rmdirSync(dirPath);
+  }
+}
+
+// Combined with better stream handling for large files
+function combineChunks(chunkDir, totalChunks, outputStream) {
+  return new Promise((resolve, reject) => {
+    let currentChunk = 0;
+    
+    function processNextChunk() {
+      if (currentChunk >= totalChunks) {
+        // All chunks processed
+        outputStream.end();
+        resolve();
+        return;
+      }
+      
+      const chunkPath = path.join(chunkDir, `chunk-${currentChunk}`);
+      const readStream = fs.createReadStream(chunkPath, { 
+        highWaterMark: HIGH_WATER_MARK 
+      });
+      
+      // Handle errors
+      readStream.on('error', (err) => {
+        console.error(`Error reading chunk ${currentChunk}:`, err);
+        reject(err);
+      });
+      
+      // When chunk is fully read, move to next
+      readStream.on('end', () => {
+        currentChunk++;
+        processNextChunk();
+      });
+      
+      // Pipe this chunk to output stream (without ending it)
+      readStream.pipe(outputStream, { end: false });
+    }
+    
+    // Start processing chunks
+    processNextChunk();
+  });
 }
 
 const PORT = process.env.PORT || 3000;

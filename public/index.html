@@ -937,8 +937,22 @@
       // Show upload in progress
       updateUploadButtonState(true);
       
-      // Start upload process with the first chunk
-      uploadChunk(file);
+      // Initialize progress display
+      document.querySelector('.progress-container').style.display = 'block';
+      document.querySelector('.progress-bar').style.width = '0%';
+      document.getElementById('uploadInfo').innerHTML = 
+        `<i class="fas fa-info-circle"></i> Preparing to upload ${formatSize(file.size)}...`;
+      
+      // Create temp directory if it doesn't exist
+      function ensureTempDir(callback) {
+        // We'll handle this on the server side, just proceed
+        callback();
+      }
+      
+      // Start the upload
+      ensureTempDir(() => {
+        uploadChunk(file);
+      });
     }
 
     function updateUploadButtonState(isDisabled) {
