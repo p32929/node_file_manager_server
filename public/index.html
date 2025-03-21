@@ -1667,7 +1667,7 @@
 
       // Update progress immediately to show we're starting this chunk
       document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-upload"></i> <span class="inline-status">Uploading chunk ${currentChunk + 1}/${totalChunks}</span><span class="status-divider">|</span><span class="inline-status">${formatSize(chunkSize)}</span>`;
+        `<i class="fas fa-upload"></i> <span class="inline-status">Uploading chunk ${currentChunk + 1}/${totalChunks}</span>`;
 
       // Record the start time for this chunk
       const chunkStartTime = Date.now();
