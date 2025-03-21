@@ -5,6 +5,7 @@ const { parse } = require('url');
 const { exec } = require('child_process');
 const os = require('os');
 const events = require('events');
+const crypto = require('crypto');
 
 // Increase default max listeners to prevent warnings during large uploads
 events.defaultMaxListeners = 30;
@@ -171,35 +172,52 @@ const server = http.createServer((req, res) => {
 
   const { pathname, query } = parse(req.url, true);
 
-  // Speed test endpoint for client-side upload optimization
+  // Speed test endpoint for client to measure network speed
   if (req.method === 'GET' && pathname === '/speed-test') {
+    // Set CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    
     try {
-      // Get requested test size, default to 256KB
-      const testSize = parseInt(query.size || '262144', 10);
+      // Parse requested size (with max limit to prevent abuse)
+      const requestedSize = query.size || '500KB';
+      let sizeInBytes = 0;
       
-      // Limit max test size to 1MB for security
-      const safeSize = Math.min(testSize, 1024 * 1024);
-      
-      // Generate random data of specified size
-      const testData = Buffer.alloc(safeSize);
-      for (let i = 0; i < safeSize; i += 4) {
-        // Fill with random data
-        testData.writeUInt32LE(Math.floor(Math.random() * 0xFFFFFFFF), i);
+      if (requestedSize.endsWith('KB')) {
+        sizeInBytes = parseInt(requestedSize.substring(0, requestedSize.length - 2)) * 1024;
+      } else if (requestedSize.endsWith('MB')) {
+        sizeInBytes = parseInt(requestedSize.substring(0, requestedSize.length - 2)) * 1024 * 1024;
+      } else {
+        sizeInBytes = parseInt(requestedSize);
       }
       
-      // Send the data with appropriate headers
-      res.writeHead(200, {
-        'Content-Type': 'application/octet-stream',
-        'Content-Length': safeSize,
-        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-        'Pragma': 'no-cache'
-      });
+      // Cap at 1MB to prevent abuse
+      sizeInBytes = Math.min(sizeInBytes, 1024 * 1024);
       
-      res.end(testData);
+      // Create a buffer of random data
+      const buffer = Buffer.alloc(sizeInBytes);
+      
+      // Fill buffer with random data to prevent compression
+      crypto.randomFillSync(buffer);
+      
+      // Set appropriate headers for download
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Length', buffer.length);
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      
+      console.log(`Serving speed test data: ${formatSize(sizeInBytes)}`);
+      
+      // Send the buffer
+      res.writeHead(200);
+      res.end(buffer);
     } catch (error) {
-      console.error('Error in speed test:', error);
-      res.writeHead(500);
-      res.end('Error generating test data');
+      console.error('Error in speed test endpoint:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: false,
+        error: 'Failed to generate speed test data'
+      }));
     }
   }
 
@@ -301,53 +319,42 @@ const server = http.createServer((req, res) => {
         return sendErrorResponse(res, 400, 'Missing file name');
       }
 
-      // Create upload directory if it doesn't exist
-      const uploadDir = path.join(process.cwd(), 'uploads');
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
+      // Create output directory if it doesn't exist
+      const outputDir = path.resolve(targetPath);
+      try {
+        if (!fs.existsSync(outputDir)) {
+          fs.mkdirSync(outputDir, { recursive: true });
+        }
+      } catch (dirError) {
+        console.error(`Error creating directory ${outputDir}:`, dirError);
+        uploadErrors.set(fileId, {
+          code: 'DIR_CREATE_ERROR',
+          message: `Cannot create directory: ${dirError.message}`,
+          timestamp: new Date().toISOString()
+        });
+        
+        return sendErrorResponse(
+          res,
+          500,
+          `Failed to create output directory: ${dirError.message}`,
+          dirError.stack,
+          'DIR_CREATE_ERROR'
+        );
       }
       
-      // Use the temp directory for chunks
-      const tempDir = path.join(os.tmpdir(), 'file-server-chunks', fileId);
-      if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true });
-      }
-      
-      // Temporary chunk file path
-      const chunkPath = path.join(tempDir, `chunk-${chunkIndex}`);
+      // Final file path (where the file will be saved)
+      const finalFilePath = path.join(outputDir, fileName);
       
       // If first chunk, initialize the upload tracker
       if (chunkIndex === 0) {
-        // Create target directory if it doesn't exist
-        const outputDir = path.resolve(targetPath);
-        try {
-          if (!fs.existsSync(outputDir)) {
-            fs.mkdirSync(outputDir, { recursive: true });
-          }
-        } catch (dirError) {
-          console.error(`Error creating directory ${outputDir}:`, dirError);
-          uploadErrors.set(fileId, {
-            code: 'DIR_CREATE_ERROR',
-            message: `Cannot create directory: ${dirError.message}`,
-            timestamp: new Date().toISOString()
-          });
-          
-          return sendErrorResponse(
-            res,
-            500,
-            `Failed to create output directory: ${dirError.message}`,
-            dirError.stack,
-            'DIR_CREATE_ERROR'
-          );
-        }
-        
-        const finalFilePath = path.join(outputDir, fileName);
-        
         // Dynamic upload timeout based on total file size
         const uploadTimeout = systemConfig.getUploadTimeout(totalChunks, chunkSize);
         
         // Get optimized write stream options for this client
         const writeStreamOptions = getWriteStreamOptions(clientSpeed, chunkSize);
+        
+        // Set flags based on whether we're starting a new file or appending
+        writeStreamOptions.flags = 'w'; // 'w' to create/overwrite, 'a' to append
         
         // Initialize the write stream with dynamically calculated performance settings
         try {
@@ -368,6 +375,7 @@ const server = http.createServer((req, res) => {
             finalPath: finalFilePath,
             receivedChunks: new Set(),
             writeStream: writeStream,
+            writePosition: 0, // Track bytes written to file
             totalChunks: totalChunks,
             createdAt: Date.now(),
             lastActivity: Date.now(),
@@ -390,53 +398,7 @@ const server = http.createServer((req, res) => {
             }, uploadTimeout)
           });
           
-          console.log(`New upload started: ${fileName} (${fileId})`);
-          
-          // Respond immediately for the first chunk to avoid client waiting
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            success: true,
-            message: 'Upload session initialized',
-            fileId: fileId
-          }));
-          
-          // Process the data after response has been sent
-          req.on('data', (chunk) => {
-            // Process data chunks as they come
-            const upload = uploadTracker.get(fileId);
-            if (upload && upload.writeStream) {
-              upload.writeStream.write(chunk);
-            }
-          });
-          
-          // Store reference to the socket close handler to properly clean it up
-          const socketCloseHandler = () => {
-            console.log(`Client disconnected during first chunk upload of ${fileId}`);
-            
-            // Clean up if we haven't finished writing
-            const upload = uploadTracker.get(fileId);
-            if (upload && !upload.receivedChunks.has(0)) {
-              clearTimeout(upload.timeout);
-              uploadTracker.delete(fileId);
-            }
-          };
-          
-          // Add handler for client disconnection
-          req.socket.on('close', socketCloseHandler);
-          
-          req.on('end', () => {
-            const upload = uploadTracker.get(fileId);
-            if (upload) {
-              upload.receivedChunks.add(chunkIndex);
-              console.log(`Chunk ${chunkIndex} processed for ${fileId}`);
-            }
-            
-            // Remove the socket close handler to prevent memory leaks
-            req.socket.removeListener('close', socketCloseHandler);
-          });
-          
-          // Early return since we've already sent the response
-          return;
+          console.log(`New upload started: ${fileName} (${fileId}) at ${finalFilePath}`);
         } catch (writeError) {
           console.error(`Error creating write stream for ${finalFilePath}:`, writeError);
           uploadErrors.set(fileId, {
@@ -453,48 +415,18 @@ const server = http.createServer((req, res) => {
             'STREAM_CREATE_ERROR'
           );
         }
-      }
-      
-      // Get the upload tracker for this file
-      const upload = uploadTracker.get(fileId);
-      if (!upload) {
-        // If the tracker is missing but we're on chunk 0, create it
-        if (chunkIndex === 0) {
-          // Reinitialize the tracker
-          const outputDir = path.resolve(targetPath);
-          if (!fs.existsSync(outputDir)) {
-            fs.mkdirSync(outputDir, { recursive: true });
-          }
-          
-          const finalFilePath = path.join(outputDir, fileName);
-          
-          // Dynamic upload timeout based on total file size
-          const uploadTimeout = systemConfig.getUploadTimeout(totalChunks, chunkSize);
-          
-          // Get optimized write stream options for this client
-          const writeStreamOptions = getWriteStreamOptions(clientSpeed, chunkSize);
-          
-          // Initialize the write stream with dynamically calculated performance settings
-          uploadTracker.set(fileId, {
-            finalPath: finalFilePath,
-            receivedChunks: new Set(),
-            writeStream: fs.createWriteStream(finalFilePath, writeStreamOptions),
-            totalChunks: totalChunks,
-            createdAt: Date.now(),
-            lastActivity: Date.now(),
-            clientSpeed: clientSpeed,
-            // Set a dynamic timeout for uploads based on file size
-            timeout: setTimeout(() => {
-              const upload = uploadTracker.get(fileId);
-              if (upload && upload.writeStream) {
-                upload.writeStream.end();
-              }
-              uploadTracker.delete(fileId);
-            }, uploadTimeout)
-          });
-          
-          console.log(`Reinitialized upload: ${fileName} (${fileId})`);
-        } else {
+        
+        // Respond immediately for the first chunk to avoid client waiting
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: 'Upload session initialized',
+          fileId: fileId
+        }));
+      } else {
+        // Get the upload tracker for this file
+        const upload = uploadTracker.get(fileId);
+        if (!upload) {
           return sendErrorResponse(
             res, 
             400, 
@@ -503,123 +435,114 @@ const server = http.createServer((req, res) => {
             'SESSION_NOT_FOUND'
           );
         }
+        
+        // Check if this chunk was already received (handle retries)
+        if (upload.receivedChunks.has(chunkIndex)) {
+          res.writeHead(200);
+          return res.end(JSON.stringify({ 
+            success: true, 
+            message: `Chunk ${chunkIndex + 1}/${totalChunks} already received`
+          }));
+        }
+        
+        // If we need to respond to the client before processing data
+        if (chunkIndex > 0 && !res.headersSent) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            message: `Processing chunk ${chunkIndex + 1}/${totalChunks}`,
+            fileId: fileId
+          }));
+        }
       }
       
-      // Check if this chunk was already received (handle retries)
-      if (upload.receivedChunks.has(chunkIndex)) {
-        res.writeHead(200);
-        return res.end(JSON.stringify({ 
-          success: true, 
-          message: `Chunk ${chunkIndex + 1}/${totalChunks} already received`
-        }));
-      }
+      // Get the upload tracker (it should exist by this point)
+      const upload = uploadTracker.get(fileId);
       
-      // Pipe the data directly from request to file stream
-      // Don't buffer the entire chunk in memory - stream it directly
+      // Prepare to collect the chunk data
+      let chunkData = Buffer.alloc(0);
+      let chunkHash = crypto.createHash('md5');
+      
+      // Receive and process the data
       req.on('data', async (chunk) => {
         try {
-          if (!upload || !upload.writeStream) {
-            // If the stream was closed to free resources, reopen it
-            if (upload && upload.streamClosed) {
-              console.log(`Reopening stream for ${fileId}`);
+          // Update last activity timestamp
+          if (upload) {
+            upload.lastActivity = Date.now();
+          } else {
+            console.error(`Upload tracker missing for ${fileId}, chunk ${chunkIndex}`);
+            uploadErrors.set(fileId, {
+              code: 'MISSING_UPLOAD_TRACKER',
+              message: 'Upload tracker was lost',
+              chunkIndex: chunkIndex,
+              timestamp: new Date().toISOString()
+            });
+            return;
+          }
+          
+          // Update hash
+          chunkHash.update(chunk);
+          
+          // Add to chunk data
+          chunkData = Buffer.concat([chunkData, chunk]);
+          
+          // Write directly to the file if we have a write stream
+          if (upload.writeStream) {
+            // For sequential writes (when chunks arrive in order)
+            if (chunkIndex === upload.receivedChunks.size) {
+              // Write the chunk directly to file - handle backpressure properly
+              const canContinue = upload.writeStream.write(chunk);
               
-              try {
-                // Reopen write stream in append mode
-                upload.writeStream = fs.createWriteStream(upload.finalPath, {
-                  highWaterMark: systemConfig.getHighWaterMark(upload.clientSpeed),
-                  lowWaterMark: systemConfig.getLowWaterMark(systemConfig.getHighWaterMark(upload.clientSpeed)),
-                  flags: 'a', // Append mode
-                  autoClose: false,
-                  encoding: null
-                });
-                
-                // Add error handler to the reopened stream
-                upload.writeStream.on('error', (writeError) => {
-                  console.error(`Write stream error for ${fileId} after reopening:`, writeError);
-                  uploadErrors.set(fileId, {
-                    code: 'WRITE_STREAM_ERROR_REOPENED',
-                    message: `File write error after reopening: ${writeError.message}`,
-                    details: writeError.stack,
-                    timestamp: new Date().toISOString()
-                  });
-                });
-                
-                upload.streamClosed = false;
-              } catch (reopenError) {
-                console.error(`Error reopening write stream for ${fileId}:`, reopenError);
-                uploadErrors.set(fileId, {
-                  code: 'STREAM_REOPEN_ERROR',
-                  message: `Cannot reopen file: ${reopenError.message}`,
-                  chunkIndex: chunkIndex,
-                  timestamp: new Date().toISOString()
-                });
-                
-                if (!res.headersSent) {
-                  sendErrorResponse(
-                    res,
-                    500,
-                    `Failed to reopen output file: ${reopenError.message}`,
-                    reopenError.stack,
-                    'STREAM_REOPEN_ERROR'
-                  );
-                }
-                return;
+              // If backpressure detected, wait for drain before continuing
+              if (!canContinue) {
+                await new Promise(resolve => upload.writeStream.once('drain', resolve));
               }
-            } else {
-              console.error(`Upload tracker missing for ${fileId}, chunk ${chunkIndex}`);
               
-              uploadErrors.set(fileId, {
-                code: 'MISSING_UPLOAD_TRACKER',
-                message: 'Upload tracker was lost',
-                chunkIndex: chunkIndex,
-                timestamp: new Date().toISOString()
-              });
-              
-              if (!res.headersSent) {
-                sendErrorResponse(
-                  res,
-                  500,
-                  'Upload session lost - please restart upload',
-                  null,
-                  'MISSING_UPLOAD_TRACKER'
-                );
-              }
-              return;
+              // Update write position
+              upload.writePosition += chunk.length;
             }
           }
-          
-          // Update last activity timestamp
-          upload.lastActivity = Date.now();
-          
-          // Write the chunk directly to file - handle backpressure properly
-          const canContinue = upload.writeStream.write(chunk);
-          
-          // If backpressure detected, wait for drain before continuing
-          if (!canContinue) {
-            await new Promise(resolve => upload.writeStream.once('drain', resolve));
-          }
         } catch (error) {
-          console.error(`Error writing chunk data for ${fileId}, chunk ${chunkIndex}:`, error);
+          console.error(`Error processing chunk data for ${fileId}, chunk ${chunkIndex}:`, error);
+          uploadErrors.set(fileId, {
+            code: 'CHUNK_PROCESSING_ERROR',
+            message: `Failed to process chunk data: ${error.message}`,
+            chunkIndex: chunkIndex,
+            timestamp: new Date().toISOString()
+          });
         }
       });
       
       // Track when the chunk is done
       req.on('end', () => {
         try {
-          // Mark this chunk as received - no need to wait for additional processing
+          // Check if upload tracker still exists
           const upload = uploadTracker.get(fileId);
           if (!upload) {
             console.error(`Upload tracker missing at end for ${fileId}, chunk ${chunkIndex}`);
             return;
           }
           
+          // Calculate MD5 hash of the chunk
+          const md5Hash = chunkHash.digest('hex');
+          console.log(`Chunk ${chunkIndex} MD5: ${md5Hash}`);
+          
           // Mark this chunk as received
           upload.receivedChunks.add(chunkIndex);
           
+          // Log progress
+          console.log(`Received chunk ${chunkIndex + 1}/${totalChunks} for ${fileId} (${chunkData.length} bytes)`);
+          
+          // If the chunk wasn't written directly (out of order), handle it here
+          if (chunkIndex !== upload.receivedChunks.size - 1 && upload.writeStream) {
+            // For now, we'll keep track of what we've received and let the client know
+            console.log(`Received out-of-order chunk ${chunkIndex} for ${fileId}`);
+          }
+          
           // Check if all chunks have been received
-          if (upload.receivedChunks.size === upload.totalChunks) {
-            // Close the file stream but wait for 'finish' event
-            console.log(`File upload almost complete: ${fileName} (${fileId}), finalizing at: ${upload.finalPath}`);
+          if (upload.receivedChunks.size === totalChunks) {
+            // Close the file stream
+            console.log(`File upload complete: ${fileName} (${fileId}), finalizing at: ${upload.finalPath}`);
             
             // End the write stream but wait for it to finish before cleaning up
             upload.writeStream.end();
@@ -628,27 +551,21 @@ const server = http.createServer((req, res) => {
               console.log(`File exists check: ${fs.existsSync(upload.finalPath)}`);
               console.log(`File size: ${fs.existsSync(upload.finalPath) ? fs.statSync(upload.finalPath).size : 'N/A'} bytes`);
               
-              // Clean up only after we're sure the file is written
+              // Clean up
               clearTimeout(upload.timeout);
               uploadTracker.delete(fileId);
-              
-              // Clean up temp directory
-              try {
-                removeDirectory(tempDir);
-                console.log(`Cleaned up temporary directory: ${tempDir}`);
-              } catch (cleanupError) {
-                console.error('Error cleaning up temp files:', cleanupError);
-              }
             });
             
-            // Send success response
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-              success: true,
-              message: 'File upload complete',
-              filePath: upload.finalPath
-            }));
-          } else {
+            // Send response for last chunk if we haven't already
+            if (!res.headersSent) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                success: true,
+                message: 'File upload complete',
+                filePath: upload.finalPath
+              }));
+            }
+          } else if (!res.headersSent) {
             // More chunks expected
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -660,13 +577,22 @@ const server = http.createServer((req, res) => {
           }
         } catch (error) {
           console.error('Error in chunk completion:', error);
-          sendErrorResponse(
-            res, 
-            500, 
-            `Server error during upload completion: ${error.message || 'Unknown error'}`, 
-            error.stack,
-            error.code
-          );
+          uploadErrors.set(fileId, {
+            code: 'CHUNK_COMPLETION_ERROR',
+            message: `Failed to complete chunk processing: ${error.message}`,
+            chunkIndex: chunkIndex,
+            timestamp: new Date().toISOString()
+          });
+          
+          if (!res.headersSent) {
+            sendErrorResponse(
+              res, 
+              500, 
+              `Server error during upload completion: ${error.message || 'Unknown error'}`, 
+              error.stack,
+              error.code
+            );
+          }
         }
       });
       
@@ -682,56 +608,15 @@ const server = http.createServer((req, res) => {
           timestamp: new Date().toISOString()
         });
         
-        // For connection reset errors, just log and keep the upload tracker active
-        if (error.code === 'ECONNRESET') {
-          console.log(`Connection reset detected for ${fileId}, chunk ${chunkIndex}. Upload can be resumed.`);
-          
-          // Don't consider the chunk complete if the connection was reset
-          // The client should retry this chunk
-          
-          // If this is the first chunk and we haven't finished, clean up
-          if (chunkIndex === 0 && !upload.receivedChunks.has(0)) {
-            clearTimeout(upload.timeout);
-            uploadTracker.delete(fileId);
-          }
-        } else {
-          // For other errors, send response if possible
-          try {
-            if (!res.headersSent) {
-              sendErrorResponse(
-                res,
-                500,
-                `Error uploading chunk: ${error.code || error.message || 'Unknown error'}`,
-                error.message,
-                error.code
-              );
-            }
-          } catch (responseError) {
-            console.error('Could not send error response:', responseError);
-          }
-        }
-      });
-      
-      // Store reference to the socket close handler to properly clean it up
-      const socketCloseHandler = () => {
         if (!res.headersSent) {
-          console.log(`Client disconnected during upload of ${fileId}, chunk ${chunkIndex}`);
-          
-          // If this is the first chunk and we haven't finished writing it, clean up
-          if (chunkIndex === 0 && !upload.receivedChunks.has(0)) {
-            clearTimeout(upload.timeout);
-            uploadTracker.delete(fileId);
-          }
+          sendErrorResponse(
+            res,
+            500,
+            `Error uploading chunk: ${error.code || error.message || 'Unknown error'}`,
+            error.message,
+            error.code
+          );
         }
-      };
-      
-      // Handle unexpected client disconnections with better error reporting
-      req.socket.on('close', socketCloseHandler);
-      
-      // Clean up the listener when the request completes
-      req.on('end', () => {
-        // Remove the socket close handler to prevent memory leaks
-        req.socket.removeListener('close', socketCloseHandler);
       });
     } catch (error) {
       console.error('Error in chunk upload:', error);
@@ -843,197 +728,149 @@ const server = http.createServer((req, res) => {
     });
   }
   
-  // New endpoint for chunked upload that combines all chunks into final file
-  else if (req.method === 'POST' && pathname === '/combine-chunks') {
-    // Extract metadata from headers or query parameters
-    const fileName = req.headers['x-file-name'] || '';
-    const fileId = req.headers['x-file-id'] || '';
-    const totalChunks = parseInt(req.headers['x-total-chunks'] || '0', 10);
-    const targetPath = query.path || getCurrentPath();
-    
-    if (!fileName || !fileId || totalChunks === 0) {
-      res.writeHead(400);
-      return res.end(JSON.stringify({ 
-        success: false, 
-        error: 'Missing file information' 
-      }));
-    }
-    
-    // Check if all chunks exist
-    const tempDir = path.join(os.tmpdir(), 'file-server-chunks', fileId);
-    if (!fs.existsSync(tempDir)) {
-      res.writeHead(404);
-      return res.end(JSON.stringify({ 
-        success: false, 
-        error: 'Upload session not found' 
-      }));
-    }
-    
-    // Verify all chunks exist
-    for (let i = 0; i < totalChunks; i++) {
-      const chunkPath = path.join(tempDir, `chunk-${i}`);
-      if (!fs.existsSync(chunkPath)) {
-        res.writeHead(400);
-        return res.end(JSON.stringify({ 
-          success: false, 
-          error: `Missing chunk ${i}` 
-        }));
-      }
-    }
-    
-    // Create output directory if it doesn't exist
-    const outputDir = path.resolve(targetPath);
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
-    
-    // Path for final file
-    const finalPath = path.join(outputDir, fileName);
-    
-    // Create write stream for final file
-    const outputStream = fs.createWriteStream(finalPath, WRITE_STREAM_OPTIONS);
-    
-    // Set up error handler
-    outputStream.on('error', (err) => {
-      console.error('Error writing final file:', err);
-      res.writeHead(500);
-      res.end(JSON.stringify({ 
-        success: false, 
-        error: 'Failed to write output file' 
-      }));
-    });
-    
-    // Combine all chunks
-    combineChunks(tempDir, totalChunks, outputStream)
-      .then(() => {
-        // Clean up temp directory
-        try {
-          removeDirectory(tempDir);
-        } catch (cleanupError) {
-          console.error('Error cleaning up temp files:', cleanupError);
-        }
-        
-        // Send success response
-        res.writeHead(200);
-        res.end(JSON.stringify({
-          success: true,
-          message: 'File assembled successfully',
-          filePath: finalPath
-        }));
-      })
-      .catch((error) => {
-        console.error('Error combining chunks:', error);
-        res.writeHead(500);
-        res.end(JSON.stringify({ 
-          success: false, 
-          error: 'Failed to combine chunks' 
-        }));
-      });
-  }
-  
-  // New endpoint to check if an upload is recoverable
+  // Check upload status endpoint
   else if (req.method === 'GET' && pathname === '/check-upload') {
+    // Set CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    
+    // Get fileId from query
     const fileId = query.fileId;
     
     if (!fileId) {
-      res.writeHead(400);
-      return res.end(JSON.stringify({ 
-        success: false, 
-        error: 'Missing fileId parameter' 
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: false,
+        exists: false,
+        error: {
+          code: 'MISSING_PARAM',
+          message: 'Missing fileId parameter'
+        }
       }));
     }
     
-    // Check if we have this upload in our tracker
+    // Check if the upload exists in our tracker
     const upload = uploadTracker.get(fileId);
-    const error = uploadErrors.get(fileId);
     
-    if (upload) {
-      // Upload session exists
-      res.writeHead(200);
-      res.end(JSON.stringify({
+    if (!upload) {
+      // Check if we have any error records for this upload
+      const error = uploadErrors.get(fileId);
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
         success: true,
-        exists: true,
-        receivedChunks: Array.from(upload.receivedChunks),
-        totalChunks: upload.totalChunks,
-        fileName: path.basename(upload.finalPath),
-        error: error || null  // Include any error information
+        exists: false,
+        error: error || null
       }));
-    } else {
-      // Check if we have a temp directory for this upload
-      const tempDir = path.join(os.tmpdir(), 'file-server-chunks', fileId);
-      if (fs.existsSync(tempDir)) {
-        try {
-          // Count how many chunks we have
-          const files = fs.readdirSync(tempDir);
-          const chunkFiles = files.filter(file => file.startsWith('chunk-'));
-          
-          res.writeHead(200);
-          res.end(JSON.stringify({
-            success: true,
-            exists: true,
-            tempOnly: true,
-            chunkCount: chunkFiles.length,
-            error: error || null  // Include any error information
-          }));
-        } catch (error) {
-          res.writeHead(500);
-          res.end(JSON.stringify({
-            success: false,
-            error: 'Error reading temp directory',
-            details: error.message
-          }));
-        }
-      } else {
-        // Check if we have an error record for this upload
-        if (error) {
-          res.writeHead(200);
-          res.end(JSON.stringify({
-            success: false,
-            exists: false,
-            error: error
-          }));
-        } else {
-          // Upload doesn't exist and no error recorded
-          res.writeHead(200);
-          res.end(JSON.stringify({
-            success: true,
-            exists: false
-          }));
-        }
-      }
     }
+    
+    // Get the chunks received so far
+    const receivedChunks = Array.from(upload.receivedChunks);
+    
+    // Send back status
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      exists: true,
+      receivedChunks: receivedChunks,
+      totalChunks: upload.totalChunks,
+      lastActivity: upload.lastActivity,
+      elapsedTime: Date.now() - upload.createdAt,
+      error: uploadErrors.get(fileId) || null
+    }));
   }
   
-  // New endpoint to directly report upload errors
+  // Report upload error endpoint - allows clients to report errors
   else if (req.method === 'GET' && pathname === '/report-upload-error') {
+    // Set CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    
+    // Get parameters from query
     const fileId = query.fileId;
-    const errorMessage = query.message || 'Client reported error';
-    const errorCode = query.code || 'CLIENT_ERROR';
-    const chunkIndex = query.chunkIndex ? parseInt(query.chunkIndex, 10) : undefined;
+    const code = query.code || 'CLIENT_ERROR';
+    const message = query.message || 'Unknown client error';
+    const chunkIndex = query.chunkIndex !== undefined ? parseInt(query.chunkIndex, 10) : null;
     
     if (!fileId) {
-      res.writeHead(400);
-      return res.end(JSON.stringify({ 
-        success: false, 
-        error: 'Missing fileId parameter' 
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: false,
+        error: 'Missing fileId parameter'
       }));
     }
     
-    // Record the client-reported error
+    // Record the error
     uploadErrors.set(fileId, {
-      code: errorCode,
-      message: errorMessage,
-      chunkIndex: chunkIndex,
-      clientReported: true,
-      timestamp: new Date().toISOString()
+      code,
+      message,
+      chunkIndex,
+      timestamp: new Date().toISOString(),
+      reportedBy: 'client'
     });
     
-    // Respond with success
-    res.writeHead(200);
+    // Log the error
+    console.log(`Client reported upload error for ${fileId}:`, code, message);
+    
+    // Send success response
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       success: true,
       message: 'Error reported successfully'
     }));
+  }
+  
+  // File list endpoint
+  else if (req.method === 'GET' && pathname === '/list-files') {
+    // Get directory path from query
+    const dirPath = query.path || getCurrentPath();
+    
+    try {
+      // Resolve the path
+      const fullPath = path.resolve(dirPath);
+      
+      // Check if the path exists and is a directory
+      if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
+        // Read the directory
+        fs.readdir(fullPath, (err, files) => {
+          if (err) {
+            res.writeHead(500);
+            return res.end(JSON.stringify({ 
+              success: false, 
+              error: 'Failed to read directory contents' 
+            }));
+          }
+          
+          // Filter out directories if needed
+          const filesList = files.filter(file => {
+            try {
+              const filePath = path.join(fullPath, file);
+              return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+            } catch (error) {
+              return false;
+            }
+          });
+          
+          // Send the list of files
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            path: dirPath,
+            files: filesList
+          }));
+        });
+      } else {
+        res.writeHead(404);
+        res.end(JSON.stringify({ 
+          success: false, 
+          error: 'Directory not found' 
+        }));
+      }
+    } catch (error) {
+      res.writeHead(500);
+      res.end(JSON.stringify({ 
+        success: false, 
+        error: 'Failed to list files: ' + error.message 
+      }));
+    }
   }
   
   // Serve static files from the public directory
@@ -1105,63 +942,92 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-// Periodically clean up stale uploads (every hour)
-setInterval(() => {
-  const now = Date.now();
-  for (const [fileId, upload] of uploadTracker.entries()) {
-    // Update system resource info before calculating timeouts
-    systemConfig.updateResourceInfo();
+// Function to periodically clean up stale uploads
+function setupUploadCleanup() {
+  setInterval(() => {
+    const now = Date.now();
+    let cleanedUp = 0;
     
-    // Calculate dynamic timeout for this upload
-    const dynamicTimeout = upload.clientSpeed ? 
-      systemConfig.getUploadTimeout(upload.totalChunks, upload.chunkSize) : 
-      24 * 60 * 60 * 1000; // 24 hour default
-    
-    // If upload is older than dynamic timeout and not completed
-    if (now - upload.createdAt > dynamicTimeout) {
-      console.log(`Cleaning up stale upload: ${fileId}`);
-      if (upload.writeStream) {
-        upload.writeStream.end();
-      }
-      clearTimeout(upload.timeout);
-      uploadTracker.delete(fileId);
-      uploadErrors.delete(fileId);  // Clean up error records too
-    }
-    // Close idle write streams to free up file descriptors
-    else {
-      // Calculate dynamic file descriptor timeout based on system load
-      const fdTimeout = systemConfig.getFileDescriptorTimeout();
+    // Check each upload
+    for (const [fileId, upload] of uploadTracker.entries()) {
+      // If last activity was more than our timeout ago, clean up
+      const inactiveTime = now - upload.lastActivity;
+      const uploadTimeout = systemConfig.getUploadTimeout(upload.totalChunks, upload.chunkSize);
       
-      if (now - upload.lastActivity > fdTimeout && upload.writeStream && !upload.writeStream.closed) {
-        console.log(`Closing idle write stream for ${fileId} to free resources`);
+      if (inactiveTime > uploadTimeout) {
+        console.log(`Cleaning up stale upload ${fileId}, inactive for ${formatTime(inactiveTime / 1000)}`);
         
-        // Store the final path so we can reopen when needed
-        const finalPath = upload.finalPath;
-        const receivedChunks = upload.receivedChunks;
+        // Close the write stream if it's still open
+        if (upload.writeStream) {
+          try {
+            upload.writeStream.end();
+          } catch (err) {
+            console.error(`Error closing write stream for ${fileId}:`, err);
+          }
+        }
         
-        // Close the stream properly
-        upload.writeStream.end();
+        // If the upload didn't complete, mark the file as incomplete
+        if (upload.receivedChunks.size < upload.totalChunks) {
+          try {
+            // Optionally, add a ".incomplete" extension to the file
+            if (fs.existsSync(upload.finalPath)) {
+              fs.renameSync(upload.finalPath, `${upload.finalPath}.incomplete`);
+              console.log(`Marked incomplete file: ${upload.finalPath}.incomplete`);
+            }
+          } catch (err) {
+            console.error(`Error marking incomplete file for ${fileId}:`, err);
+          }
+        }
         
-        // Update tracker with null write stream but keep other data
-        uploadTracker.set(fileId, {
-          ...upload,
-          writeStream: null,
-          finalPath: finalPath,
-          receivedChunks: receivedChunks,
-          streamClosed: true
-        });
+        // Clear the timeout and delete from tracker
+        clearTimeout(upload.timeout);
+        uploadTracker.delete(fileId);
+        cleanedUp++;
       }
     }
-  }
-  
-  // Also clean up old error records
-  for (const [fileId, error] of uploadErrors.entries()) {
-    if (now - new Date(error.timestamp).getTime() > 24 * 60 * 60 * 1000) {
-      // Remove error records older than 24 hours
-      uploadErrors.delete(fileId);
+    
+    // Also clean up old error records
+    const errorCleanupTime = 24 * 60 * 60 * 1000; // 24 hours
+    let cleanedErrors = 0;
+    
+    for (const [fileId, error] of uploadErrors.entries()) {
+      const errorTime = new Date(error.timestamp).getTime();
+      if (now - errorTime > errorCleanupTime) {
+        uploadErrors.delete(fileId);
+        cleanedErrors++;
+      }
     }
+    
+    if (cleanedUp > 0 || cleanedErrors > 0) {
+      console.log(`Cleanup: removed ${cleanedUp} stale uploads and ${cleanedErrors} old error records`);
+    }
+  }, 60000); // Check every minute
+}
+
+// Call setup function when server starts
+setupUploadCleanup();
+
+// Helper function to parse human-readable time
+function formatTime(seconds) {
+  if (seconds < 60) {
+    return `${Math.floor(seconds)}s`;
+  } else if (seconds < 3600) {
+    return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
+  } else {
+    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   }
-}, 60 * 60 * 1000);
+}
+
+// Common error response helper function
+function sendErrorResponse(res, statusCode, errorMessage, details = null, errorCode = null) {
+  res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    success: false,
+    error: errorMessage,
+    code: errorCode,
+    details: details
+  }));
+}
 
 // Helper function to get current path
 function getCurrentPath() {
@@ -1198,65 +1064,12 @@ function removeDirectory(dirPath) {
   }
 }
 
-// Combined with better stream handling for large files
-function combineChunks(chunkDir, totalChunks, outputStream) {
-  return new Promise((resolve, reject) => {
-    let currentChunk = 0;
-    
-    function processNextChunk() {
-      if (currentChunk >= totalChunks) {
-        // All chunks processed
-        outputStream.end();
-        resolve();
-        return;
-      }
-      
-      const chunkPath = path.join(chunkDir, `chunk-${currentChunk}`);
-      const readStream = fs.createReadStream(chunkPath, { 
-        highWaterMark: HIGH_WATER_MARK 
-      });
-      
-      // Handle errors
-      readStream.on('error', (err) => {
-        console.error(`Error reading chunk ${currentChunk}:`, err);
-        
-        // Record the error
-        if (fileId) {
-          uploadErrors.set(fileId, {
-            code: 'READ_ERROR',
-            message: `Failed to read chunk ${currentChunk}: ${err.message}`,
-            chunkIndex: currentChunk,
-            timestamp: new Date().toISOString()
-          });
-        }
-        
-        reject(err);
-      });
-      
-      // When chunk is fully read, move to next
-      readStream.on('end', () => {
-        currentChunk++;
-        processNextChunk();
-      });
-      
-      // Pipe this chunk to output stream (without ending it)
-      readStream.pipe(outputStream, { end: false });
-    }
-    
-    // Start processing chunks
-    processNextChunk();
-  });
-}
-
-// Common error response helper function
-function sendErrorResponse(res, statusCode, errorMessage, details = null, errorCode = null) {
-  res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({
-    success: false,
-    error: errorMessage,
-    code: errorCode,
-    details: details
-  }));
+// Helper function to format sizes
+function formatSize(bytes) {
+  if (bytes === 0) return '0 B';
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
 }
 
 // Helper function to determine optimal buffer size based on client capabilities
@@ -1271,14 +1084,6 @@ function determineOptimalBufferSize(clientSpeed, chunkSize) {
   
   // Return dynamically calculated high water mark
   return systemConfig.getHighWaterMark(clientSpeed, chunkSize);
-}
-
-// Helper function to format sizes
-function formatSize(bytes) {
-  if (bytes === 0) return '0 B';
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
 }
 
 const PORT = process.env.PORT || 3000;

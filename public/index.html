@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Simple File Upload Server</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
   <style>
     /* General Styling */
     :root {
@@ -331,10 +332,6 @@
       color: #999;
     }
     
-    .resume-button-container {
-      margin-top: 8px;
-    }
-
     /* Upload Info */
     .upload-info {
       margin-top: 12px;
@@ -995,6 +992,61 @@
     let uploadHeartbeatInterval = null; // Interval to check upload status
     let lastHeartbeat = 0; // Time of last heartbeat
     let uploadingFileName = null; // Name of the file currently being uploaded
+    let uploadChecksums = []; // Track checksums of uploaded chunks for verification
+    
+    // Detect system capabilities when page loads
+    window.addEventListener('load', function() {
+      detectSystemCapabilities();
+      
+      // Run a small speed test to determine initial network speed
+      if (navigator.onLine) {
+        runSpeedTest();
+      }
+    });
+    
+    // Detect system capabilities
+    function detectSystemCapabilities() {
+      // Get connection info if available
+      if (navigator.connection) {
+        connectionType = navigator.connection.effectiveType;
+        console.log(`Detected connection type: ${connectionType}`);
+        
+        // Listen for connection changes
+        navigator.connection.addEventListener('change', function() {
+          connectionType = navigator.connection.effectiveType;
+          console.log(`Connection type changed to: ${connectionType}`);
+        });
+      }
+      
+      // Get memory info if available
+      if (navigator.deviceMemory) {
+        systemMemory = navigator.deviceMemory;
+        console.log(`Detected device memory: ${systemMemory}GB`);
+      }
+    }
+    
+    // Run a small speed test to determine initial network speed
+    function runSpeedTest() {
+      const testUrl = '/speed-test?size=500KB&noCache=' + Date.now();
+      const startTime = Date.now();
+      
+      fetch(testUrl)
+        .then(response => response.blob())
+        .then(data => {
+          const endTime = Date.now();
+          const duration = (endTime - startTime) / 1000; // seconds
+          const sizeMB = data.size / (1024 * 1024); // MB
+          const speedMBps = sizeMB / duration;
+          
+          // Add to speed samples
+          speedSamples.push(speedMBps * 1024 * 1024); // Convert to bytes/sec
+          
+          console.log(`Speed test result: ${(speedMBps).toFixed(2)} MB/s`);
+        })
+        .catch(err => {
+          console.warn('Speed test failed:', err);
+        });
+    }
     
     // Heartbeat function to ensure UI stays in sync with actual upload state
     function startUploadHeartbeat() {
@@ -1031,10 +1083,7 @@
                 
                 // Upload is still on server, show an appropriate message
                 document.getElementById('uploadInfo').innerHTML = 
-                  `<i class="fas fa-exclamation-triangle"></i> Upload appears stalled. Server has received ${status.receivedChunks.length} chunks.`;
-                
-                // Give option to resume
-                showResumeOption();
+                  `<i class="fas fa-exclamation-triangle"></i> <span class="inline-status">Upload appears stalled</span><span class="status-divider">|</span><span class="inline-status">Server has received ${status.receivedChunks.length} chunks</span>`;
               } else {
                 // Check if the server reported an error
                 if (status.error) {
@@ -1098,9 +1147,6 @@
       document.getElementById('uploadInfo').innerHTML = 
         `<i class="fas fa-exclamation-circle"></i> <span class="inline-status">Upload has been lost</span>`;
       
-      // Add resume button in a separate container below
-      showResumeOption();
-      
       // Update internal state
       isUploading = false;
       
@@ -1114,6 +1160,25 @@
       }
     }
     
+    // Calculate MD5 hash of a chunk for verification
+    function calculateMD5(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsArrayBuffer(blob);
+        
+        reader.onload = function() {
+          const buffer = reader.result;
+          const wordArray = CryptoJS.lib.WordArray.create(buffer);
+          const hash = CryptoJS.MD5(wordArray).toString();
+          resolve(hash);
+        };
+        
+        reader.onerror = function() {
+          reject(new Error('Failed to read file for MD5 calculation'));
+        };
+      });
+    }
+    
     // Handle server-reported errors
     function handleServerError(error) {
       console.error('Server reported upload error:', error);
@@ -1122,9 +1187,6 @@
       document.getElementById('uploadInfo').innerHTML = 
         `<i class="fas fa-exclamation-circle"></i> <span class="inline-status">Error: ${error.message || 'Unknown error'}</span>` +
         (error.code ? `<span class="status-divider">|</span><span class="inline-status">Code: ${error.code}</span>` : '');
-      
-      // Add resume button in a separate container
-      showResumeOption();
       
       // Update internal state
       isUploading = false;
@@ -1137,50 +1199,6 @@
       if (progressBar) {
         progressBar.style.backgroundColor = '#f44336';
       }
-    }
-    
-    // Show UI option to resume upload
-    function showResumeOption() {
-      const uploadInfo = document.getElementById('uploadInfo');
-      
-      // Don't add resume option if it's already there
-      if (document.getElementById('resume-upload-btn')) {
-        return;
-      }
-      
-      // Create a separate container for the resume button to prevent layout shifts
-      const resumeContainer = document.createElement('div');
-      resumeContainer.className = 'resume-button-container';
-      
-      // Create resume button
-      const resumeBtn = document.createElement('button');
-      resumeBtn.id = 'resume-upload-btn';
-      resumeBtn.className = 'action-button';
-      resumeBtn.innerHTML = '<i class="fas fa-redo"></i> Restart Upload';
-      resumeBtn.onclick = function() {
-        // Find the file input element
-        const fileInput = document.getElementById('fileInput');
-        
-        // If we still have the file in the input, restart the upload
-        if (fileInput.files.length > 0 && uploadingFileName === fileInput.files[0].name) {
-          uploadFile();
-          // Remove the resume button container
-          const container = document.querySelector('.resume-button-container');
-          if (container) container.remove();
-        } else {
-          // Show message to select file again
-          showToast('Please select the file again to restart the upload', 'warning');
-          // Reset the progress UI
-          document.querySelector('.progress-container').style.display = 'none';
-          updateUploadButtonState(false);
-        }
-      };
-      
-      // Add the button to the container
-      resumeContainer.appendChild(resumeBtn);
-      
-      // Add the container after the uploadInfo element
-      uploadInfo.parentNode.insertBefore(resumeContainer, uploadInfo.nextSibling);
     }
     
     // Track visibility changes
@@ -1240,6 +1258,7 @@
       lastSpeedAdjustmentTime = 0;
       chunkSizeHistory = [];
       adaptiveAdjustmentEnabled = true;
+      uploadChecksums = [];
       
       // Record initial chunk size decision
       chunkSizeHistory.push({
@@ -1259,10 +1278,6 @@
       document.querySelector('.progress-container').style.display = 'block';
       document.querySelector('.progress-bar').style.width = '0%';
       document.querySelector('.progress-bar').style.backgroundColor = '#4CAF50'; // Reset color
-      
-      // Remove any resume button that might exist
-      const resumeContainer = document.querySelector('.resume-button-container');
-      if (resumeContainer) resumeContainer.remove();
       
       // Set initial upload info in single-line format
       document.getElementById('uploadInfo').innerHTML = 
@@ -1356,28 +1371,27 @@
     
     // Track upload performance for a chunk
     function trackChunkPerformance(chunkIndex, chunkSize, startTime, endTime, success) {
-      const duration = (endTime - startTime) / 1000; // seconds
-      const speed = chunkSize / duration;
+      const transferTime = endTime - startTime;
+      const transferSpeed = success ? chunkSize / (transferTime / 1000) : 0;
       
-      // Add to performance history
-      uploadPerformance.push({
+      // Store performance data for this chunk
+      uploadPerformance[chunkIndex] = {
         chunkIndex,
         chunkSize,
-        duration,
-        speed,
-        success,
-        timestamp: endTime
-      });
+        startTime,
+        endTime,
+        transferTime,
+        transferSpeed,
+        success
+      };
       
-      // Add to speed samples for moving averages
-      if (success && speed > 0) {
-        speedSamples.push(speed);
+      if (success) {
+        console.log(`Chunk ${chunkIndex} performance: ${formatSize(transferSpeed)}/s`);
       }
       
-      // Return performance data
       return {
-        duration,
-        speed,
+        duration: transferTime / 1000,
+        speed: transferSpeed,
         success
       };
     }
@@ -1716,6 +1730,14 @@
             // Track performance of this chunk
             trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, chunkEndTime, true);
             
+            // Calculate and store MD5 hash of this chunk for verification if needed
+            calculateMD5(chunk).then(hash => {
+              uploadChecksums[chunkIndex] = hash;
+              console.log(`Chunk ${chunkIndex} MD5: ${hash}`);
+            }).catch(err => {
+              console.warn(`Could not calculate MD5 for chunk ${chunkIndex}:`, err);
+            });
+            
             // If this is the last chunk or we got a filePath in the response
             if (response.filePath || currentChunk === totalChunks - 1) {
               console.log(`Upload of ${file.name} completed!`);
@@ -1785,187 +1807,60 @@
         }
       };
       
-      // Function to handle upload errors with retry logic
-      function handleUploadError(xhr, file, fileId, errorMessage, errorDetails) {
-        console.error(`Upload error for chunk ${currentChunk}:`, errorDetails);
-        
-        // Report error to server
-        reportErrorToServer({
-          code: errorDetails.code || 'UPLOAD_ERROR',
-          message: errorMessage,
-          details: errorDetails
-        });
-        
-        // Check if we should retry
-        if (retryCount < MAX_RETRY_COUNT) {
-          retryCount++;
-          
-          // Show retry message
-          document.getElementById('uploadInfo').innerHTML = 
-            `<i class="fas fa-sync-alt"></i> <span class="inline-status">Retrying chunk ${currentChunk + 1}/${totalChunks}</span><span class="status-divider">|</span><span class="inline-status">Attempt ${retryCount}/${MAX_RETRY_COUNT}</span>`;
-          
-          // Exponential backoff
-          const delay = Math.min(retryDelay * Math.pow(2, retryCount - 1), MAX_RETRY_DELAY);
-          
-          console.log(`Retrying in ${delay}ms (attempt ${retryCount}/${MAX_RETRY_COUNT})`);
-          
-          // Try again after delay
-          setTimeout(() => {
-            // Retry same chunk
-            uploadChunk(file, uploadedFileId || fileId);
-          }, delay);
-        } else {
-          // Out of retries, show error
-          isUploading = false;
-          document.getElementById('uploadInfo').innerHTML = 
-            `<i class="fas fa-exclamation-circle"></i> <span class="inline-status">Upload failed after ${MAX_RETRY_COUNT} attempts</span>`;
-          
-          // Show more detailed error
-          showToast(errorMessage, 'error', errorDetails.details);
-          
-          // Keep progress bar visible but show error
-          const progressBar = document.querySelector('.progress-bar');
-          if (progressBar) {
-            progressBar.style.backgroundColor = '#f44336';
-          }
-          
-          // Show resume option
-          showResumeOption();
-          
-          // Stop upload
-          updateUploadButtonState(false);
-        }
-      }
-      
-      // Function to track performance of each chunk
-      function trackChunkPerformance(chunkIndex, chunkSize, startTime, endTime, success) {
-        const transferTime = endTime - startTime;
-        const transferSpeed = success ? chunkSize / (transferTime / 1000) : 0;
-        
-        // Store performance data for this chunk
-        uploadPerformance[chunkIndex] = {
-          chunkIndex,
-          chunkSize,
-          startTime,
-          endTime,
-          transferTime,
-          transferSpeed,
-          success
-        };
-        
-        if (success) {
-          console.log(`Chunk ${chunkIndex} performance: ${formatSize(transferSpeed)}/s`);
-        }
-      }
-      
-      // Update progress UI with current status
-      function updateProgress() {
-        if (!isUploading) return;
-        
-        const progressBar = document.querySelector('.progress-bar');
-        const file = document.getElementById('fileInput').files[0];
-        if (!file || !progressBar) return;
-        
-        // Calculate percentage
-        const percent = Math.min(100, Math.round((uploadedBytes / file.size) * 100));
-        progressBar.style.width = percent + '%';
-        
-        // Calculate average speed from the moving window
-        let avgSpeed = 0;
-        if (uploadSpeeds.length > 0) {
-          avgSpeed = uploadSpeeds.reduce((a, b) => a + b, 0) / uploadSpeeds.length;
-        }
-        
-        // Calculate estimated time remaining
-        const remainingBytes = file.size - uploadedBytes;
-        let eta = remainingBytes / avgSpeed; // seconds
-        
-        if (!isFinite(eta) || isNaN(eta)) {
-          eta = 0;
-        }
-        
-        // Only update if we have valid speed data
-        if (avgSpeed > 0) {
-          const speedText = formatSize(avgSpeed) + '/s';
-          const etaText = formatTime(eta);
-          
-          // Create a single line status that includes all information
-          document.getElementById('uploadInfo').innerHTML = 
-            `<i class="fas fa-upload"></i> <span class="inline-status">${percent}%</span>` +
-            `<span class="status-divider">|</span>` +
-            `<span class="inline-status">${speedText}</span>` +
-            `<span class="status-divider">|</span>` +
-            `<span class="inline-status">Chunk ${currentChunk + 1}/${totalChunks}</span>` +
-            `<span class="status-divider">|</span>` +
-            `<span class="inline-status">ETA: ${etaText}</span>`;
-        }
-      }
-      
-      // Format time in seconds to a human-readable string
-      function formatTime(seconds) {
-        if (seconds < 60) {
-          return Math.ceil(seconds) + ' sec';
-        } else if (seconds < 3600) {
-          return Math.ceil(seconds / 60) + ' min';
-        } else {
-          const hours = Math.floor(seconds / 3600);
-          const minutes = Math.ceil((seconds % 3600) / 60);
-          return hours + ' hr ' + minutes + ' min';
-        }
-      }
-
       xhr.send(formData);
     }
     
-    function handleUploadError(xhr, file, fileId, errorMessage, errorDetails = null) {
-      console.error(`Upload error: ${errorMessage}`, errorDetails);
+    // Function to handle upload errors with retry logic
+    function handleUploadError(xhr, file, fileId, errorMessage, errorDetails) {
+      console.error(`Upload error for chunk ${currentChunk}:`, errorDetails);
       
+      // Report error to server
+      reportErrorToServer({
+        code: errorDetails.code || 'UPLOAD_ERROR',
+        message: errorMessage,
+        details: errorDetails
+      });
+      
+      // Check if we should retry
       if (retryCount < MAX_RETRY_COUNT) {
-        // Implement exponential backoff with jitter
-        const jitter = Math.random() * 500; // Random jitter between 0-500ms
-        const actualDelay = Math.min(retryDelay + jitter, MAX_RETRY_DELAY);
-        const retryAttempt = retryCount + 1;
+        retryCount++;
         
-        // Show detailed error and retry information
-        const retryMessage = `Upload error: ${errorMessage}. 
-           Retrying in ${Math.round(actualDelay/1000)} seconds... (Attempt ${retryAttempt}/${MAX_RETRY_COUNT})`;
+        // Show retry message
+        document.getElementById('uploadInfo').innerHTML = 
+          `<i class="fas fa-sync-alt"></i> <span class="inline-status">Retrying chunk ${currentChunk + 1}/${totalChunks}</span><span class="status-divider">|</span><span class="inline-status">Attempt ${retryCount}/${MAX_RETRY_COUNT}</span>`;
         
-        // Don't show details in the retry notification to avoid overwhelming the user
-        showToast(retryMessage, 'warning');
+        // Exponential backoff
+        const delay = Math.min(retryDelay * Math.pow(2, retryCount - 1), MAX_RETRY_DELAY);
         
-        // Update progress info to show retry status
-        const infoElement = document.getElementById('uploadInfo');
-        if (infoElement) {
-          infoElement.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${retryMessage}`;
-        }
+        console.log(`Retrying in ${delay}ms (attempt ${retryCount}/${MAX_RETRY_COUNT})`);
         
+        // Try again after delay
         setTimeout(() => {
-          retryCount++;
-          retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY); // Exponential backoff
-          uploadChunk(file, fileId);
-        }, actualDelay);
+          // Retry same chunk
+          uploadChunk(file, uploadedFileId || fileId);
+        }, delay);
       } else {
-        // Final failure after all retries
-        const failMessage = `Upload failed after ${MAX_RETRY_COUNT} attempts: ${errorMessage}`;
-        showToast(failMessage, 'error', errorDetails);
-        console.error(failMessage, errorDetails);
-        
+        // Out of retries, show error
         isUploading = false;
-        updateProgress();
+        document.getElementById('uploadInfo').innerHTML = 
+          `<i class="fas fa-exclamation-circle"></i> <span class="inline-status">Upload failed after ${MAX_RETRY_COUNT} attempts</span>`;
         
-        // Show a more visible error in the upload info area
-        const infoElement = document.getElementById('uploadInfo');
-        if (infoElement) {
-          infoElement.innerHTML = `<i class="fas fa-times-circle" style="color: var(--warning);"></i> 
-            <span style="color: var(--warning);">Upload failed: ${errorMessage}</span>
-            <div style="margin-top: 5px; font-size: 12px; color: var(--gray-dark);">
-              Check console for details or contact administrator.
-            </div>`;
+        // Show more detailed error
+        showToast(errorMessage, 'error', errorDetails.details);
+        
+        // Keep progress bar visible but show error
+        const progressBar = document.querySelector('.progress-bar');
+        if (progressBar) {
+          progressBar.style.backgroundColor = '#f44336';
         }
+        
+        // Stop upload
+        updateUploadButtonState(false);
       }
     }
-
-    function updateProgress(uploadedBytes, totalBytes) {
+    
+    // Update progress UI with current status
+    function updateProgress() {
       if (!isUploading) {
         // Reset progress bar when not uploading
         document.querySelector('.progress-bar').style.width = '0%';
@@ -1974,69 +1869,46 @@
         return;
       }
       
-      if (!uploadedBytes || !totalBytes) {
-        return; // Skip if we don't have valid data
-      }
+      const progressBar = document.querySelector('.progress-bar');
+      const file = document.getElementById('fileInput').files[0];
+      if (!file || !progressBar) return;
       
-      const overallPercent = Math.round((uploadedBytes / totalBytes) * 100);
+      // Calculate percentage
+      const percent = Math.min(100, Math.round((uploadedBytes / file.size) * 100));
+      progressBar.style.width = percent + '%';
       
-      // Calculate average speed using better weighting of recent speeds
+      // Calculate average speed from the moving window
       let avgSpeed = 0;
       if (uploadSpeeds.length > 0) {
-        // Weight recent speeds more heavily
-        let totalWeight = 0;
-        let weightedSum = 0;
-        
-        for (let i = 0; i < uploadSpeeds.length; i++) {
-          // More recent speeds get higher weights
-          const weight = Math.pow(1.5, i);
-          weightedSum += uploadSpeeds[i] * weight;
-          totalWeight += weight;
-        }
-        
-        avgSpeed = weightedSum / totalWeight;
+        avgSpeed = uploadSpeeds.reduce((a, b) => a + b, 0) / uploadSpeeds.length;
       }
       
-      // Calculate ETA based on recent speed and remaining bytes
-      const remainingBytes = totalBytes - uploadedBytes;
-      let estimatedTimeRemaining = 0;
+      // Calculate estimated time remaining
+      const remainingBytes = file.size - uploadedBytes;
+      let eta = remainingBytes / avgSpeed; // seconds
       
+      if (!isFinite(eta) || isNaN(eta)) {
+        eta = 0;
+      }
+      
+      // Only update if we have valid speed data
       if (avgSpeed > 0) {
-        estimatedTimeRemaining = remainingBytes / avgSpeed;
-      } else {
-        // Fallback to average speed since start
-        const elapsedTime = (Date.now() - overallStartTime) / 1000;
-        if (elapsedTime > 0 && uploadedBytes > 0) {
-          const overallSpeed = uploadedBytes / elapsedTime;
-          estimatedTimeRemaining = remainingBytes / overallSpeed;
-        }
-      }
-      
-      // Format values for display
-      const speedText = formatSize(avgSpeed) + '/s';
-      const remainingText = formatSize(remainingBytes);
-      const etaText = formatTime(estimatedTimeRemaining);
-      const chunkText = `Chunk ${currentChunk + 1}/${totalChunks}`;
-      
-      // Only update UI if not throttled or once every second if throttled
-      const now = Date.now();
-      if (!isThrottled || (now - lastUIUpdate > 1000)) {
-        document.querySelector('.progress-bar').style.width = overallPercent + '%';
-        document.getElementById('uploadInfo').innerHTML = 
-          `<i class="fas fa-info-circle"></i> ${overallPercent}% complete • ${chunkText} • ${speedText} • ${remainingText} remaining • ETA: ${etaText}`;
+        const speedText = formatSize(avgSpeed) + '/s';
+        const etaText = formatTime(eta);
         
-        lastUIUpdate = now;
+        // Create a single line status that includes all information
+        document.getElementById('uploadInfo').innerHTML = 
+          `<i class="fas fa-upload"></i> <span class="inline-status">${percent}%</span>` +
+          `<span class="status-divider">|</span>` +
+          `<span class="inline-status">${speedText}</span>` +
+          `<span class="status-divider">|</span>` +
+          `<span class="inline-status">Chunk ${currentChunk + 1}/${totalChunks}</span>` +
+          `<span class="status-divider">|</span>` +
+          `<span class="inline-status">ETA: ${etaText}</span>`;
       }
-    }
-
-    function formatSize(bytes) {
-      if (bytes === 0) return '0 B';
-      const k = 1024;
-      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-      const i = Math.floor(Math.log(bytes) / Math.log(k));
-      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
     
+    // Format time in seconds to a human-readable string
     function formatTime(seconds) {
       if (!isFinite(seconds) || seconds === 0) return 'calculating...';
       
@@ -2050,6 +1922,21 @@
       const hours = Math.floor(seconds / 3600);
       const minutes = Math.floor((seconds % 3600) / 60);
       return `${hours} hr ${minutes} min`;
+    }
+    
+    // Function to load file list
+    function loadFileList(path) {
+      fetch(`/list-files?path=${encodeURIComponent(path || '/')}`)
+        .then(res => res.json())
+        .then(data => {
+          // Handle file list refresh
+          if (data.success) {
+            console.log('File list refreshed');
+          }
+        })
+        .catch(err => {
+          console.error('Error refreshing file list:', err);
+        });
     }
 
     function showHowTo() {
