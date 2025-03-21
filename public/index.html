@@ -498,6 +498,49 @@
       flex-grow: 1;
     }
 
+    /* Enhanced toast for detailed errors */
+    #errorDetails {
+      display: none;
+      padding: 10px;
+      margin-top: 10px;
+      background: rgba(0,0,0,0.2);
+      border-radius: 4px;
+      font-family: monospace;
+      white-space: pre-wrap;
+      max-height: 100px;
+      overflow-y: auto;
+      font-size: 12px;
+    }
+    
+    #toast.error #errorDetails.has-details {
+      display: block;
+    }
+    
+    #toast .toast-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    
+    #toast .toast-actions button {
+      padding: 5px 10px;
+      font-size: 12px;
+      background: rgba(255,255,255,0.2);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    
+    #toast .toast-actions button:hover {
+      background: rgba(255,255,255,0.3);
+    }
+    
+    #toast.error.detailed {
+      width: 500px;
+      max-width: 90%;
+    }
+
     /* Responsive design */
     @media (max-width: 768px) {
       .folder-list {
@@ -675,7 +718,11 @@
   <!-- Toast Notification -->
   <div id="toast">
     <i class="fas fa-check-circle"></i>
-    <span id="toastMessage"></span>
+    <div>
+      <span id="toastMessage"></span>
+      <div id="errorDetails"></div>
+      <div class="toast-actions" id="toastActions"></div>
+    </div>
   </div>
 
   <script>
@@ -877,7 +924,7 @@
     let lastChunkBytes = 0;
     let uploadSpeeds = [];
     const SPEED_WINDOW_SIZE = 5;
-    let lastUploadTime = 0;
+    let lastProgressTime = 0;
     let retryCount = 0;
     let retryDelay = 1000;
     const MAX_RETRY_COUNT = 5;
@@ -923,7 +970,7 @@
       chunkUploadAborted = false;
       isUploading = true;
       isThrottled = document.hidden; // Start throttled if in background
-      lastUploadTime = 0;
+      lastProgressTime = 0;
       lastChunkBytes = 0;
       retryCount = 0;
       retryDelay = 1000;
@@ -979,6 +1026,14 @@
         loadFileList(urlParams.get('path') || '');
         return;
       }
+      
+      // Define sendNextChunk function to handle progression through the upload
+      function sendNextChunk() {
+        // Increment the chunk counter for the next chunk
+        currentChunk++;
+        // Call uploadChunk again with the same file and fileId
+        uploadChunk(file, uploadedFileId || fileId);
+      }
 
       // Prepare chunk
       const start = currentChunk * optimalChunkSize;
@@ -1004,9 +1059,9 @@
       if (fileId) {
         xhr.setRequestHeader('X-File-Id', fileId);
       }
-      
-      // If needed for your setup
-      // xhr.setRequestHeader('Content-Type', 'multipart/form-data');
+
+      // Store the current chunk we're working on for potential resume
+      const chunkIndex = currentChunk;
       
       // Track upload progress per chunk
       xhr.upload.onprogress = function(e) {
@@ -1021,8 +1076,8 @@
           
           // Update upload speeds data
           const now = Date.now();
-          if (lastUploadTime) {
-            const timeElapsed = (now - lastUploadTime) / 1000; // seconds
+          if (lastProgressTime) {
+            const timeElapsed = (now - lastProgressTime) / 1000; // seconds
             if (timeElapsed > 0) {
               // Calculate this interval's speed
               const bytesUploaded = currentChunkBytes - lastChunkBytes;
@@ -1038,7 +1093,7 @@
             }
           }
           
-          lastUploadTime = now;
+          lastProgressTime = now;
           lastChunkBytes = currentChunkBytes;
           
           // Update the progress bar
@@ -1048,51 +1103,172 @@
       
       xhr.onload = function() {
         if (xhr.status === 200) {
-          const response = JSON.parse(xhr.responseText);
-          if (response.success) {
-            // First chunk will return the fileId we need to use for subsequent chunks
-            const responseFileId = response.fileId || fileId;
+          try {
+            const response = JSON.parse(xhr.responseText);
             
-            // Move to next chunk
-            currentChunk++;
-            // Reset retry counter on success
-            retryCount = 0;
-            retryDelay = 1000; // Reset delay 
+            if (!response.success) {
+              // Server returned an error with 200 status code but success=false
+              const errorDetails = {
+                code: response.error?.code || 'SERVER_ERROR',
+                details: response.error?.message || response.error || 'Unknown server error',
+                timestamp: new Date().toISOString(),
+                chunkIndex: chunkIndex
+              };
+              console.error('Server returned error:', errorDetails);
+              handleUploadError(xhr, file, fileId, response.error?.message || 'Server error', errorDetails);
+              return;
+            }
             
-            // Upload next chunk
-            uploadChunk(file, responseFileId);
-          } else {
-            handleUploadError(xhr, file, fileId, "Server reported error: " + response.error);
+            if (chunkIndex === 0) {
+              uploadedFileId = response.fileId || fileId;
+            }
+            
+            chunksUploaded++;
+            const newProgress = (chunksUploaded / totalChunks) * 100;
+            currentProgress = newProgress;
+            updateProgress();
+            
+            // Calculate upload speed
+            const now = Date.now();
+            const elapsedTime = (now - lastProgressTime) / 1000; // seconds
+            lastProgressTime = now;
+            
+            // Update uploadedBytes for speed calculation
+            const chunkSize = chunk.end - chunk.start;
+            uploadedBytes += chunkSize;
+            
+            // Calculate current speed in bytes/second
+            if (elapsedTime > 0) {
+              const currentSpeed = chunkSize / elapsedTime;
+              
+              // Add to rolling window of speeds
+              uploadSpeeds.push(currentSpeed);
+              if (uploadSpeeds.length > SPEED_WINDOW_SIZE) {
+                uploadSpeeds.shift(); // Remove oldest speed
+              }
+              
+              // Calculate average speed from recent samples
+              const avgSpeed = uploadSpeeds.reduce((sum, speed) => sum + speed, 0) / uploadSpeeds.length;
+              
+              // Calculate remaining time
+              const remainingBytes = file.size - uploadedBytes;
+              const eta = remainingBytes / avgSpeed; // seconds
+              
+              updateUploadInfo(file, avgSpeed, eta);
+            }
+            
+            if (chunksUploaded === totalChunks) {
+              showToast('File uploaded successfully!', 'success');
+              isUploading = false;
+              updateProgress();
+              
+              // Reset tracking variables for next upload
+              uploadStartTime = null;
+              uploadedBytes = 0;
+              uploadSpeeds = [];
+              
+              const uploadInfo = document.getElementById('uploadInfo');
+              if (uploadInfo) {
+                uploadInfo.innerHTML = `<i class="fas fa-check-circle"></i> ${file.name} uploaded successfully!`;
+              }
+              
+              return;
+            }
+            
+            chunkIndex++;
+            sendNextChunk();
+          } catch (e) {
+            console.error('Error parsing server response:', e, xhr.responseText);
+            const errorDetails = {
+              code: 'INVALID_SERVER_RESPONSE',
+              details: `Failed to parse server response: ${e.message}`,
+              rawResponse: xhr.responseText.substring(0, 500), // Only include part of the response to avoid massive logs
+              timestamp: new Date().toISOString()
+            };
+            handleUploadError(xhr, file, fileId, 'Invalid server response', errorDetails);
           }
         } else {
-          handleUploadError(xhr, file, fileId, "HTTP error: " + xhr.status);
+          // HTTP error status
+          let errorMessage = `Server responded with status ${xhr.status}`;
+          let errorDetails = {
+            httpStatus: xhr.status,
+            statusText: xhr.statusText,
+            timestamp: new Date().toISOString(),
+            chunkIndex: chunkIndex
+          };
+          
+          // Try to parse error details if available
+          try {
+            if (xhr.responseText) {
+              const errorResponse = JSON.parse(xhr.responseText);
+              errorDetails = {
+                ...errorDetails,
+                code: errorResponse.error?.code || errorResponse.code || 'HTTP_ERROR',
+                details: errorResponse.error?.message || errorResponse.message || errorResponse.error || 'Unknown server error',
+                stack: errorResponse.error?.stack || errorResponse.stack
+              };
+              errorMessage = errorDetails.details || errorMessage;
+            }
+          } catch (e) {
+            // Unable to parse JSON error
+            errorDetails.parseError = e.message;
+            errorDetails.rawResponse = xhr.responseText.substring(0, 500); // Limit size
+          }
+          
+          console.error(`HTTP error during upload:`, errorDetails);
+          handleUploadError(xhr, file, fileId, errorMessage, errorDetails);
         }
       };
       
       xhr.onerror = function() {
-        handleUploadError(xhr, file, fileId, "Network error");
+        // Network errors (ECONNRESET, etc.) - a more aggressive retry strategy
+        const errorMessage = `Network error on chunk ${chunkIndex + 1}/${totalChunks}. Will retry shortly.`;
+        console.error(errorMessage);
+        showToast(errorMessage, 'warning');
+        
+        // Wait a moment before retrying
+        setTimeout(() => {
+          // Don't increment currentChunk, retry the same one
+          const retryJitter = Math.random() * 1000; // Add random delay between 0-1000ms
+          uploadChunk(file, fileId);
+        }, 2000 + Math.random() * 3000); // Wait 2-5 seconds before retry
       };
       
       xhr.ontimeout = function() {
-        handleUploadError(xhr, file, fileId, "Upload timed out");
+        const timeoutMessage = `Upload timed out for chunk ${chunkIndex + 1}/${totalChunks}`;
+        showToast(timeoutMessage, 'error');
+        console.error(timeoutMessage);
+        handleUploadError(xhr, file, fileId, timeoutMessage);
       };
       
-      // Set a longer timeout for large chunks (30 seconds)
-      xhr.timeout = 30000;
+      // Set a longer timeout for large chunks (60 seconds)
+      xhr.timeout = 60000;
       
       // Send the chunk
       xhr.send(formData);
     }
     
-    function handleUploadError(xhr, file, fileId, errorMessage) {
-      console.error(errorMessage);
+    function handleUploadError(xhr, file, fileId, errorMessage, errorDetails = null) {
+      console.error(`Upload error: ${errorMessage}`, errorDetails);
       
       if (retryCount < MAX_RETRY_COUNT) {
         // Implement exponential backoff with jitter
         const jitter = Math.random() * 500; // Random jitter between 0-500ms
         const actualDelay = Math.min(retryDelay + jitter, MAX_RETRY_DELAY);
+        const retryAttempt = retryCount + 1;
         
-        showToast(`Upload error. Retrying in ${Math.round(actualDelay/1000)} seconds... (Attempt ${retryCount+1}/${MAX_RETRY_COUNT})`, 'warning');
+        // Show detailed error and retry information
+        const retryMessage = `Upload error: ${errorMessage}. 
+           Retrying in ${Math.round(actualDelay/1000)} seconds... (Attempt ${retryAttempt}/${MAX_RETRY_COUNT})`;
+        
+        // Don't show details in the retry notification to avoid overwhelming the user
+        showToast(retryMessage, 'warning');
+        
+        // Update progress info to show retry status
+        const infoElement = document.getElementById('uploadInfo');
+        if (infoElement) {
+          infoElement.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${retryMessage}`;
+        }
         
         setTimeout(() => {
           retryCount++;
@@ -1100,9 +1276,23 @@
           uploadChunk(file, fileId);
         }, actualDelay);
       } else {
-        showToast('Upload failed after multiple attempts. Please try again later.', 'error');
+        // Final failure after all retries
+        const failMessage = `Upload failed after ${MAX_RETRY_COUNT} attempts: ${errorMessage}`;
+        showToast(failMessage, 'error', errorDetails);
+        console.error(failMessage, errorDetails);
+        
         isUploading = false;
         updateProgress();
+        
+        // Show a more visible error in the upload info area
+        const infoElement = document.getElementById('uploadInfo');
+        if (infoElement) {
+          infoElement.innerHTML = `<i class="fas fa-times-circle" style="color: var(--warning);"></i> 
+            <span style="color: var(--warning);">Upload failed: ${errorMessage}</span>
+            <div style="margin-top: 5px; font-size: 12px; color: var(--gray-dark);">
+              Check console for details or contact administrator.
+            </div>`;
+        }
       }
     }
 
@@ -1177,10 +1367,18 @@
       document.body.style.overflow = ''; // Restore scrolling
     }
 
-    function showToast(message, type = '') {
+    function showToast(message, type = '', details = null, duration = 5000) {
       const toast = document.getElementById('toast');
       const toastMessage = document.getElementById('toastMessage');
+      const errorDetails = document.getElementById('errorDetails');
+      const toastActions = document.getElementById('toastActions');
       const icon = toast.querySelector('i');
+      
+      // Clear previous content
+      toastMessage.textContent = message;
+      errorDetails.textContent = '';
+      errorDetails.className = '';
+      toastActions.innerHTML = '';
       
       // Update icon based on message type
       if (type === 'success') {
@@ -1189,16 +1387,45 @@
         icon.className = 'fas fa-times-circle';
       } else if (type === 'info') {
         icon.className = 'fas fa-info-circle';
+      } else if (type === 'warning') {
+        icon.className = 'fas fa-exclamation-triangle';
       } else {
         icon.className = 'fas fa-bell';
       }
       
+      // Set class for styling
       toast.className = type ? `show ${type}` : 'show';
-      toastMessage.textContent = message;
       
+      // Add error details if provided
+      if (details && type === 'error') {
+        errorDetails.textContent = typeof details === 'object' ? 
+          JSON.stringify(details, null, 2) : details.toString();
+        errorDetails.className = 'has-details';
+        toast.className += ' detailed';
+        
+        // Add copy button for error details
+        const copyButton = document.createElement('button');
+        copyButton.innerHTML = '<i class="fas fa-copy"></i> Copy Error';
+        copyButton.onclick = function() {
+          navigator.clipboard.writeText(
+            `Error: ${message}\nDetails: ${errorDetails.textContent}`
+          ).then(() => {
+            copyButton.innerHTML = '<i class="fas fa-check"></i> Copied!';
+            setTimeout(() => {
+              copyButton.innerHTML = '<i class="fas fa-copy"></i> Copy Error';
+            }, 2000);
+          });
+        };
+        toastActions.appendChild(copyButton);
+        
+        // Longer duration for errors with details
+        duration = 15000;
+      }
+      
+      // Hide after duration
       setTimeout(function(){ 
         toast.className = toast.className.replace("show", ""); 
-      }, 3000);
+      }, duration);
     }
 
     // Event listeners
@@ -1252,7 +1479,10 @@
     window.onload = () => {
       fetchFolders('/');
       
-      // Removed auto-display of help dialog
+      // Check for unfinished uploads
+      setTimeout(() => {
+        checkForUnfinishedUploads();
+      }, 1000); // Check after 1 second to avoid delaying initial page load
     };
 
     function cancelUpload() {
@@ -1261,6 +1491,153 @@
         showToast('Upload cancelled.', 'info');
         isUploading = false;
         updateProgress();
+      }
+    }
+
+    // Add upload resumption support
+    function checkForUnfinishedUploads() {
+      try {
+        const lastUploadTime = localStorage.getItem('lastUploadTime');
+        const fileId = localStorage.getItem('lastUploadFileId');
+        const fileName = localStorage.getItem('lastUploadFileName');
+        const lastChunkIndex = localStorage.getItem('lastChunkIndex');
+        const totalChunks = localStorage.getItem('totalChunks');
+        
+        // Check if we have all the required data and if it's recent (less than 24 hours old)
+        if (lastUploadTime && fileId && fileName && lastChunkIndex && totalChunks) {
+          const timeElapsed = Date.now() - parseInt(lastUploadTime);
+          const hoursElapsed = timeElapsed / (1000 * 60 * 60);
+          
+          if (hoursElapsed < 24) {
+            // Show resume option
+            showResumeUploadDialog(fileName, parseInt(lastChunkIndex), parseInt(totalChunks), fileId);
+          } else {
+            // Clear old data
+            clearUnfinishedUploadData();
+          }
+        }
+      } catch (error) {
+        console.warn('Error checking for unfinished uploads:', error);
+      }
+    }
+    
+    function showResumeUploadDialog(fileName, lastChunkIndex, totalChunks, fileId) {
+      // Calculate progress percentage
+      const progress = Math.round((lastChunkIndex / totalChunks) * 100);
+      
+      // Show toast with resume option
+      const toast = document.getElementById('toast');
+      const toastMessage = document.getElementById('toastMessage');
+      const icon = toast.querySelector('i');
+      
+      icon.className = 'fas fa-exclamation-circle';
+      toast.className = 'show info';
+      
+      // Create resume button inside toast
+      toastMessage.innerHTML = `<div>Unfinished upload found: ${fileName} (${progress}% complete)</div>
+        <button id="resumeButton" style="margin-top: 10px; padding: 5px 10px; background: white; color: var(--primary); border: none; border-radius: 4px; cursor: pointer;">
+          <i class="fas fa-play-circle"></i> Resume Upload
+        </button>
+        <button id="discardButton" style="margin-top: 10px; margin-left: 10px; padding: 5px 10px; background: rgba(255,255,255,0.3); color: white; border: none; border-radius: 4px; cursor: pointer;">
+          <i class="fas fa-times-circle"></i> Discard
+        </button>`;
+      
+      // Keep toast open longer
+      setTimeout(function() {
+        if (toast.className.includes('show')) {
+          toast.className = toast.className.replace("show", "");
+        }
+      }, 15000); // 15 seconds
+      
+      // Add event listeners
+      document.getElementById('resumeButton').addEventListener('click', function() {
+        toast.className = toast.className.replace("show", "");
+        promptForFileToResume(fileName, lastChunkIndex, totalChunks, fileId);
+      });
+      
+      document.getElementById('discardButton').addEventListener('click', function() {
+        toast.className = toast.className.replace("show", "");
+        clearUnfinishedUploadData();
+      });
+    }
+    
+    function promptForFileToResume(fileName, lastChunkIndex, totalChunks, fileId) {
+      // Create a temporary file input to select the same file again
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.style.display = 'none';
+      document.body.appendChild(input);
+      
+      input.onchange = function() {
+        if (input.files.length > 0) {
+          const file = input.files[0];
+          
+          // Check if it's the same file by name and size (approximate check)
+          if (file.name === fileName) {
+            // Set the file in our main input
+            document.getElementById('fileInput').files = input.files;
+            updateFileInfo();
+            
+            // Resume upload from last chunk
+            resumeUpload(file, lastChunkIndex, totalChunks, fileId);
+          } else {
+            showToast(`Selected file "${file.name}" doesn't match the unfinished upload "${fileName}"`, 'error');
+          }
+        }
+        
+        // Remove temporary input
+        document.body.removeChild(input);
+      };
+      
+      // Trigger file selection
+      input.click();
+    }
+    
+    function resumeUpload(file, lastChunkIndex, totalChunks, fileId) {
+      // Calculate optimal chunk size based on file size
+      let optimalChunkSize = 5 * 1024 * 1024; // Default 5MB
+      if (file.size < 10 * 1024 * 1024) { // Less than 10MB
+        optimalChunkSize = 1 * 1024 * 1024; // Use 1MB chunks
+      } else if (file.size > 1024 * 1024 * 1024) { // More than 1GB
+        optimalChunkSize = 10 * 1024 * 1024; // Use 10MB chunks
+      }
+      
+      // Reset state
+      currentChunk = parseInt(lastChunkIndex);
+      totalChunks = parseInt(totalChunks);
+      chunkUploadAborted = false;
+      isUploading = true;
+      isThrottled = document.hidden;
+      lastProgressTime = 0;
+      lastChunkBytes = 0;
+      retryCount = 0;
+      retryDelay = 1000;
+      uploadSpeeds = [];
+      
+      // Show upload in progress
+      updateUploadButtonState(true);
+      
+      // Initialize progress display
+      document.querySelector('.progress-container').style.display = 'block';
+      document.querySelector('.progress-bar').style.width = `${Math.round((currentChunk / totalChunks) * 100)}%`;
+      document.getElementById('uploadInfo').innerHTML = 
+        `<i class="fas fa-info-circle"></i> Resuming upload from ${Math.round((currentChunk / totalChunks) * 100)}%...`;
+      
+      showToast(`Resuming upload of ${file.name} from ${Math.round((currentChunk / totalChunks) * 100)}%...`, 'info');
+      
+      // Resume upload
+      uploadChunk(file, fileId);
+    }
+    
+    function clearUnfinishedUploadData() {
+      try {
+        localStorage.removeItem('lastUploadFileId');
+        localStorage.removeItem('lastUploadFileName');
+        localStorage.removeItem('lastUploadTime');
+        localStorage.removeItem('lastChunkIndex');
+        localStorage.removeItem('totalChunks');
+      } catch (error) {
+        console.warn('Error clearing unfinished upload data:', error);
       }
     }
   </script>

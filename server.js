@@ -101,7 +101,12 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ path: currentPath, folders }));
     } catch (err) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ path: '/', folders: [], error: err.message }));
+      res.end(JSON.stringify({ 
+        path: '/', 
+        folders: [], 
+        error: err.message,
+        success: false
+      }));
     }
   }
   
@@ -123,8 +128,7 @@ const server = http.createServer((req, res) => {
       // Verify file name
       if (!fileName) {
         console.error('Missing file name');
-        res.writeHead(400);
-        return res.end(JSON.stringify({ success: false, error: 'Missing file name' }));
+        return sendErrorResponse(res, 400, 'Missing file name');
       }
 
       // Create upload directory if it doesn't exist
@@ -213,11 +217,13 @@ const server = http.createServer((req, res) => {
           
           console.log(`Reinitialized upload: ${fileName} (${fileId})`);
         } else {
-          res.writeHead(400);
-          return res.end(JSON.stringify({ 
-            error: 'Upload session not found. The upload may have expired or the first chunk was not received.',
-            shouldRestart: true
-          }));
+          return sendErrorResponse(
+            res, 
+            400, 
+            'Upload session not found. The upload may have expired or the first chunk was not received.', 
+            { chunkIndex, fileId },
+            'SESSION_NOT_FOUND'
+          );
         }
       }
       
@@ -276,7 +282,7 @@ const server = http.createServer((req, res) => {
             }
             
             // Send success response
-            res.writeHead(200);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
               success: true,
               message: 'File upload complete',
@@ -284,7 +290,7 @@ const server = http.createServer((req, res) => {
             }));
           } else {
             // More chunks expected
-            res.writeHead(200);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
               success: true,
               message: `Chunk ${chunkIndex + 1}/${totalChunks} received`,
@@ -294,24 +300,71 @@ const server = http.createServer((req, res) => {
           }
         } catch (error) {
           console.error('Error in chunk upload:', error);
-          res.writeHead(500);
-          res.end(`Server error during upload: ${error.message}`);
+          sendErrorResponse(
+            res, 
+            500, 
+            `Server error during upload: ${error.message || 'Unknown error'}`, 
+            error.stack,
+            error.code
+          );
         }
       });
       
-      // Handle errors
+      // Error handling for chunk endpoint
       req.on('error', (error) => {
         console.error(`Chunk upload error for ${fileId}, chunk ${chunkIndex}:`, error);
-        res.writeHead(500);
-        res.end(JSON.stringify({
-          error: 'Error uploading chunk',
-          details: error.message
-        }));
+        
+        // For connection reset errors, just log and keep the upload tracker active
+        if (error.code === 'ECONNRESET') {
+          console.log(`Connection reset detected for ${fileId}, chunk ${chunkIndex}. Upload can be resumed.`);
+          
+          // Don't consider the chunk complete if the connection was reset
+          // The client should retry this chunk
+          
+          // If this is the first chunk and we haven't finished, clean up
+          if (chunkIndex === 0 && !upload.receivedChunks.has(0)) {
+            clearTimeout(upload.timeout);
+            uploadTracker.delete(fileId);
+          }
+        } else {
+          // For other errors, send response if possible
+          try {
+            if (!res.headersSent) {
+              sendErrorResponse(
+                res,
+                500,
+                `Error uploading chunk: ${error.code || error.message || 'Unknown error'}`,
+                error.message,
+                error.code
+              );
+            }
+          } catch (responseError) {
+            console.error('Could not send error response:', responseError);
+          }
+        }
+      });
+      
+      // Handle unexpected client disconnections with better error reporting
+      req.socket.on('close', () => {
+        if (!res.headersSent) {
+          console.log(`Client disconnected during upload of ${fileId}, chunk ${chunkIndex}`);
+          
+          // If this is the first chunk and we haven't finished writing it, clean up
+          if (chunkIndex === 0 && !upload.receivedChunks.has(0)) {
+            clearTimeout(upload.timeout);
+            uploadTracker.delete(fileId);
+          }
+        }
       });
     } catch (error) {
       console.error('Error in chunk upload:', error);
-      res.writeHead(500);
-      res.end(`Server error during upload: ${error.message}`);
+      sendErrorResponse(
+        res, 
+        500, 
+        `Server error during upload initialization: ${error.message || 'Unknown error'}`, 
+        error.stack,
+        error.code
+      );
     }
   }
   
@@ -491,6 +544,64 @@ const server = http.createServer((req, res) => {
       });
   }
   
+  // New endpoint to check if an upload is recoverable
+  else if (req.method === 'GET' && pathname === '/check-upload') {
+    const fileId = query.fileId;
+    
+    if (!fileId) {
+      res.writeHead(400);
+      return res.end(JSON.stringify({ 
+        success: false, 
+        error: 'Missing fileId parameter' 
+      }));
+    }
+    
+    // Check if we have this upload in our tracker
+    const upload = uploadTracker.get(fileId);
+    if (upload) {
+      // Upload session exists
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        success: true,
+        exists: true,
+        receivedChunks: Array.from(upload.receivedChunks),
+        totalChunks: upload.totalChunks,
+        fileName: path.basename(upload.finalPath)
+      }));
+    } else {
+      // Check if we have a temp directory for this upload
+      const tempDir = path.join(os.tmpdir(), 'file-server-chunks', fileId);
+      if (fs.existsSync(tempDir)) {
+        try {
+          // Count how many chunks we have
+          const files = fs.readdirSync(tempDir);
+          const chunkFiles = files.filter(file => file.startsWith('chunk-'));
+          
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            success: true,
+            exists: true,
+            tempOnly: true,
+            chunkCount: chunkFiles.length
+          }));
+        } catch (error) {
+          res.writeHead(500);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Error reading temp directory'
+          }));
+        }
+      } else {
+        // Upload doesn't exist
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          success: true,
+          exists: false
+        }));
+      }
+    }
+  }
+  
   // Serve static files from the public directory
   else if (req.method === 'GET') {
     let filePath = '.' + pathname;
@@ -634,6 +745,17 @@ function combineChunks(chunkDir, totalChunks, outputStream) {
     // Start processing chunks
     processNextChunk();
   });
+}
+
+// Common error response helper function
+function sendErrorResponse(res, statusCode, errorMessage, details = null, errorCode = null) {
+  res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    success: false,
+    error: errorMessage,
+    code: errorCode,
+    details: details
+  }));
 }
 
 const PORT = process.env.PORT || 3000;
