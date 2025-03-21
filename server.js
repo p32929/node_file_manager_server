@@ -4,6 +4,10 @@ const path = require('path');
 const { parse } = require('url');
 const { exec } = require('child_process');
 const os = require('os');
+const events = require('events');
+
+// Increase default max listeners to prevent warnings during large uploads
+events.defaultMaxListeners = 30;
 
 // Create temp directory for chunk uploads
 const TEMP_DIR = path.join(os.tmpdir(), 'file-server-chunks');
@@ -24,8 +28,12 @@ const WRITE_STREAM_OPTIONS = {
 // Performance settings
 const LOW_WATER_MARK = 4 * 1024 * 1024; // Increase to 4MB threshold
 const UPLOAD_TIMEOUT = 48 * 60 * 60 * 1000; // Increase to 48 hours timeout for very large uploads
+const SOCKET_TIMEOUT = 10 * 60 * 1000; // 10 minute socket timeout
 
 const server = http.createServer((req, res) => {
+  // Increase socket timeout for uploads
+  req.socket.setTimeout(SOCKET_TIMEOUT);
+  
   // Set CORS headers for cross-tab uploads
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -198,12 +206,30 @@ const server = http.createServer((req, res) => {
           }
         });
         
+        // Store reference to the socket close handler to properly clean it up
+        const socketCloseHandler = () => {
+          console.log(`Client disconnected during first chunk upload of ${fileId}`);
+          
+          // Clean up if we haven't finished writing
+          const upload = uploadTracker.get(fileId);
+          if (upload && !upload.receivedChunks.has(0)) {
+            clearTimeout(upload.timeout);
+            uploadTracker.delete(fileId);
+          }
+        };
+        
+        // Add handler for client disconnection
+        req.socket.on('close', socketCloseHandler);
+        
         req.on('end', () => {
           const upload = uploadTracker.get(fileId);
           if (upload) {
             upload.receivedChunks.add(chunkIndex);
             console.log(`Chunk ${chunkIndex} processed for ${fileId}`);
           }
+          
+          // Remove the socket close handler to prevent memory leaks
+          req.socket.removeListener('close', socketCloseHandler);
         });
         
         // Early return since we've already sent the response
@@ -373,8 +399,8 @@ const server = http.createServer((req, res) => {
         }
       });
       
-      // Handle unexpected client disconnections with better error reporting
-      req.socket.on('close', () => {
+      // Store reference to the socket close handler to properly clean it up
+      const socketCloseHandler = () => {
         if (!res.headersSent) {
           console.log(`Client disconnected during upload of ${fileId}, chunk ${chunkIndex}`);
           
@@ -384,6 +410,15 @@ const server = http.createServer((req, res) => {
             uploadTracker.delete(fileId);
           }
         }
+      };
+      
+      // Handle unexpected client disconnections with better error reporting
+      req.socket.on('close', socketCloseHandler);
+      
+      // Clean up the listener when the request completes
+      req.on('end', () => {
+        // Remove the socket close handler to prevent memory leaks
+        req.socket.removeListener('close', socketCloseHandler);
       });
     } catch (error) {
       console.error('Error in chunk upload:', error);
