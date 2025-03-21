@@ -1,4 +1,22 @@
 {
   "name": "simple-file-server",
-  "packageManager": "yarn@4.5.2"
+  "packageManager": "yarn@4.5.2",
+  "version": "1.0.0",
+  "description": "A **lightweight, self-hosted file upload server** with **zero external dependencies**. Just **clone the repo, run it with Node.js, and start uploading files**—no need to install any extra packages.",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/p32929/node_file_upload_server.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/p32929/node_file_upload_server/issues"
+  },
+  "homepage": "https://github.com/p32929/node_file_upload_server#readme"
 }

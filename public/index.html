@@ -870,64 +870,36 @@
       }
     }
 
-    let xhr; // Global variable for XMLHttpRequest
-    let isUploading = false; // Flag to track upload status
-    let chunkUploadAborted = false; // Flag to track if upload was aborted
+    // Global variables for uploads
+    let isUploading = false;
+    let chunkUploadAborted = false;
+    let isThrottled = false;
+    let lastChunkBytes = 0;
+    let uploadSpeeds = [];
+    const SPEED_WINDOW_SIZE = 5;
+    let lastUploadTime = 0;
+    let retryCount = 0;
+    let retryDelay = 1000;
+    const MAX_RETRY_COUNT = 5;
+    const MAX_RETRY_DELAY = 16000; // 16 seconds max delay
     let currentChunk = 0; // Current chunk being uploaded
     let totalChunks = 0; // Total number of chunks for current upload
-    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks (increased from 1MB)
     let lastVisibilityNotification = 0; // Track when last notification was shown
+    let lastUIUpdate = 0; // Track when last UI update was made
     
-    // Track throttling state
-    let isThrottled = false;
-    let lastUploadTime = 0;
-    const THROTTLE_THRESHOLD = 1000; // ms
-    let currentFileId = null; // Store the fileId returned from the server
-    
-    function handleVisibilityChange() {
-      if (!isUploading) return;
-      
-      if (document.hidden) {
-        // Optimize background uploads by reducing UI updates
-        isThrottled = true;
-      } else {
-        // Resume normal operation when tab is visible again
-        isThrottled = false;
+    // Track visibility changes
+    document.addEventListener('visibilitychange', function() {
+      if (isUploading) {
+        isThrottled = document.hidden;
         
-        // Refresh progress UI when coming back to tab
-        updateUploadProgressUI();
+        // Notify user when upload is running in background
+        const now = Date.now();
+        if (document.hidden && now - lastVisibilityNotification > 10000) {
+          showToast('Upload continuing in background. Return to this tab for full speed.', 'info');
+          lastVisibilityNotification = now;
+        }
       }
-    }
-    
-    // Separate function to update UI for better performance
-    function updateUploadProgressUI() {
-      if (!isUploading) return;
-      
-      // Get the current progress data
-      const file = document.getElementById('fileInput').files[0];
-      const previousChunksBytes = currentChunk * CHUNK_SIZE;
-      const totalUploadedBytes = previousChunksBytes;
-      const overallPercent = Math.round((totalUploadedBytes / file.size) * 100);
-      
-      // Calculate elapsed time and speed
-      const elapsedTime = (Date.now() - uploadStartTime) / 1000; // seconds
-      const bytesPerSecond = uploadedBytes / elapsedTime;
-      
-      // Remaining calculations
-      const remainingSize = file.size - totalUploadedBytes;
-      const estimatedTimeLeft = remainingSize / (bytesPerSecond > 0 ? bytesPerSecond : 0.1);
-      
-      // Format values for display
-      const speedText = formatSize(bytesPerSecond) + '/s';
-      const remainingText = formatSize(remainingSize);
-      const timeText = formatTime(estimatedTimeLeft);
-      const chunkText = `Chunk ${currentChunk + 1}/${totalChunks}`;
-      
-      // Update UI
-      document.querySelector('.progress-bar').style.width = overallPercent + '%';
-      document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-info-circle"></i> ${overallPercent}% complete • ${chunkText} • ${speedText} • ${remainingText} remaining • ETA: ${timeText}`;
-    }
+    });
     
     function uploadFile() {
       const file = document.getElementById('fileInput').files[0];
@@ -936,209 +908,248 @@
         return;
       }
 
+      // Calculate optimal chunk size based on file size
+      // Use smaller chunks for smaller files, larger chunks for bigger files
+      let optimalChunkSize = 5 * 1024 * 1024; // Default 5MB
+      if (file.size < 10 * 1024 * 1024) { // Less than 10MB
+        optimalChunkSize = 1 * 1024 * 1024; // Use 1MB chunks
+      } else if (file.size > 1024 * 1024 * 1024) { // More than 1GB
+        optimalChunkSize = 10 * 1024 * 1024; // Use 10MB chunks
+      }
+      
       // Reset state
       currentChunk = 0;
-      totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+      totalChunks = Math.ceil(file.size / optimalChunkSize);
       chunkUploadAborted = false;
       isUploading = true;
       isThrottled = document.hidden; // Start throttled if in background
       lastUploadTime = 0;
+      lastChunkBytes = 0;
+      retryCount = 0;
+      retryDelay = 1000;
+      uploadSpeeds = [];
       
       // For very large files, show a warning
       if (file.size > 100 * 1024 * 1024) { // 100MB
         showToast('Large file detected. Upload will continue in the background.', 'info');
       }
+      
+      // Show upload in progress
+      updateUploadButtonState(true);
+      
+      // Start upload process with the first chunk
+      uploadChunk(file);
+    }
 
-      // Disable upload button and show cancel button
-      document.getElementById('uploadButton').disabled = true;
-      document.getElementById('uploadButton').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
-      document.getElementById('cancelButton').style.display = 'flex';
-      
-      // Initialize progress display
-      document.querySelector('.progress-container').style.display = 'block';
-      document.querySelector('.progress-bar').style.width = '0%';
-      document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-info-circle"></i> Preparing to upload ${formatSize(file.size)}...`;
-      
-      // Global variables for tracking upload
-      uploadStartTime = Date.now();
-      uploadedBytes = 0;
-      
-      // Start uploading the first chunk
-      uploadNextChunk(file);
+    function updateUploadButtonState(isDisabled) {
+      document.getElementById('uploadButton').disabled = isDisabled;
+      if (isDisabled) {
+        document.getElementById('cancelButton').style.display = 'inline-block';
+      } else {
+        document.getElementById('cancelButton').style.display = 'none';
+      }
     }
     
-    function uploadNextChunk(file) {
+    function uploadChunk(file, fileId = null) {
       if (chunkUploadAborted) {
-        return;
-      }
-      
-      if (currentChunk >= totalChunks) {
-        // All chunks uploaded
         isUploading = false;
-        resetUploadUI();
-        showToast('Upload completed successfully!', 'success');
-        
-        // Reset form
-        document.getElementById('fileInput').value = '';
-        document.getElementById('fileInfo').style.display = 'none';
-        document.querySelector('.progress-container').style.display = 'none';
-        document.getElementById('uploadInfo').innerHTML = '';
+        updateProgress();
         return;
       }
-      
+
+      if (currentChunk >= totalChunks) {
+        showToast('Upload complete!', 'success');
+        isUploading = false;
+        updateProgress();
+        const urlParams = new URLSearchParams(window.location.search);
+        loadFileList(urlParams.get('path') || '');
+        return;
+      }
+
       // Prepare chunk
-      const start = currentChunk * CHUNK_SIZE;
-      const end = Math.min(file.size, start + CHUNK_SIZE);
+      const start = currentChunk * optimalChunkSize;
+      const end = Math.min(file.size, start + optimalChunkSize);
       const chunk = file.slice(start, end);
       const chunkSize = end - start;
+
+      // Create FormData
+      const formData = new FormData();
+      const tempFileName = file.name + '.' + Date.now();
+      formData.append('file', chunk, tempFileName);
       
-      // Send the chunk
-      xhr = new XMLHttpRequest();
+      // Prepare upload
+      const xhr = new XMLHttpRequest();
       xhr.open('POST', '/upload-chunk', true);
       
-      // Set headers with metadata
-      xhr.setRequestHeader('X-File-Name', file.name);
-      xhr.setRequestHeader('X-Chunk-Index', currentChunk.toString());
-      xhr.setRequestHeader('X-Total-Chunks', totalChunks.toString());
-      xhr.setRequestHeader('X-File-Path', document.getElementById('targetPath').value);
+      // Set headers for chunked upload
+      xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+      xhr.setRequestHeader('X-Chunk-Index', currentChunk);
+      xhr.setRequestHeader('X-Total-Chunks', totalChunks);
       
-      // Add fileId header if we're sending chunk after the first one
-      if (currentFileId && currentChunk > 0) {
-        xhr.setRequestHeader('X-File-Id', currentFileId);
+      // If it's not the first chunk, use the fileId
+      if (fileId) {
+        xhr.setRequestHeader('X-File-Id', fileId);
       }
       
-      xhr.upload.onprogress = function(event) {
-        // Only update UI if not throttled or enough time has passed
-        const now = Date.now();
-        if (!isThrottled || (now - lastUploadTime > THROTTLE_THRESHOLD)) {
-          lastUploadTime = now;
-          
-          // Calculate progress for current chunk
-          const chunkProgress = event.loaded / event.total;
+      // If needed for your setup
+      // xhr.setRequestHeader('Content-Type', 'multipart/form-data');
+      
+      // Track upload progress per chunk
+      xhr.upload.onprogress = function(e) {
+        if (e.lengthComputable) {
+          // Calculate chunk progress (0-1)
+          const chunkProgress = e.loaded / e.total;
           
           // Calculate overall progress
-          const previousChunksBytes = currentChunk * CHUNK_SIZE;
+          const previousChunksBytes = currentChunk * optimalChunkSize;
           const currentChunkBytes = chunkProgress * chunkSize;
           const totalUploadedBytes = previousChunksBytes + currentChunkBytes;
-          const overallPercent = Math.round((totalUploadedBytes / file.size) * 100);
           
-          // Update uploadedBytes for speed calculation
-          uploadedBytes = totalUploadedBytes;
-          
-          // Calculate elapsed time and speed
-          const elapsedTime = (Date.now() - uploadStartTime) / 1000; // seconds
-          const bytesPerSecond = uploadedBytes / elapsedTime;
-          
-          // Remaining calculations
-          const remainingSize = file.size - totalUploadedBytes;
-          const estimatedTimeLeft = remainingSize / (bytesPerSecond > 0 ? bytesPerSecond : 0.1);
-          
-          // Format values for display
-          const speedText = formatSize(bytesPerSecond) + '/s';
-          const remainingText = formatSize(remainingSize);
-          const timeText = formatTime(estimatedTimeLeft);
-          const chunkText = `Chunk ${currentChunk + 1}/${totalChunks}`;
-          
-          // Update UI only if not throttled (tab is visible)
-          if (!isThrottled) {
-            document.querySelector('.progress-bar').style.width = overallPercent + '%';
-            document.getElementById('uploadInfo').innerHTML = 
-              `<i class="fas fa-info-circle"></i> ${overallPercent}% complete • ${chunkText} • ${speedText} • ${remainingText} remaining • ETA: ${timeText}`;
+          // Update upload speeds data
+          const now = Date.now();
+          if (lastUploadTime) {
+            const timeElapsed = (now - lastUploadTime) / 1000; // seconds
+            if (timeElapsed > 0) {
+              // Calculate this interval's speed
+              const bytesUploaded = currentChunkBytes - lastChunkBytes;
+              const speed = bytesUploaded / timeElapsed; // bytes per second
+              
+              // Add to rolling window
+              uploadSpeeds.push(speed);
+              
+              // Keep only the most recent samples
+              if (uploadSpeeds.length > SPEED_WINDOW_SIZE) {
+                uploadSpeeds.shift();
+              }
+            }
           }
+          
+          lastUploadTime = now;
+          lastChunkBytes = currentChunkBytes;
+          
+          // Update the progress bar
+          updateProgress(totalUploadedBytes, file.size);
         }
       };
       
       xhr.onload = function() {
         if (xhr.status === 200) {
-          // Update UI for completed chunk
-          if (!isThrottled) {
-            updateUploadProgressUI();
+          const response = JSON.parse(xhr.responseText);
+          if (response.success) {
+            // First chunk will return the fileId we need to use for subsequent chunks
+            const responseFileId = response.fileId || fileId;
+            
+            // Move to next chunk
+            currentChunk++;
+            // Reset retry counter on success
+            retryCount = 0;
+            retryDelay = 1000; // Reset delay 
+            
+            // Upload next chunk
+            uploadChunk(file, responseFileId);
+          } else {
+            handleUploadError(xhr, file, fileId, "Server reported error: " + response.error);
           }
-          
-          // Try to parse the response and get fileId if this is the first chunk
-          if (currentChunk === 0) {
-            try {
-              const response = JSON.parse(xhr.responseText);
-              if (response.fileId) {
-                currentFileId = response.fileId;
-                console.log("Saved fileId:", currentFileId);
-              }
-            } catch (e) {
-              console.error("Error parsing response:", e);
-            }
-          }
-          
-          // Chunk uploaded successfully
-          currentChunk++;
-          
-          // Move to next chunk immediately to maximize bandwidth usage
-          // Don't delay when in background
-          uploadNextChunk(file);
         } else {
-          handleUploadError('Chunk upload failed: ' + xhr.responseText);
+          handleUploadError(xhr, file, fileId, "HTTP error: " + xhr.status);
         }
       };
       
       xhr.onerror = function() {
-        // Retry on failure if not aborted
-        if (!chunkUploadAborted) {
-          console.log(`Retrying chunk ${currentChunk + 1} after error...`);
-          setTimeout(() => uploadNextChunk(file), 1000); // Retry after 1 second
-        } else {
-          handleUploadError('Connection error during upload. Please try again.');
-        }
+        handleUploadError(xhr, file, fileId, "Network error");
       };
       
-      xhr.onabort = function() {
+      xhr.ontimeout = function() {
+        handleUploadError(xhr, file, fileId, "Upload timed out");
+      };
+      
+      // Set a longer timeout for large chunks (30 seconds)
+      xhr.timeout = 30000;
+      
+      // Send the chunk
+      xhr.send(formData);
+    }
+    
+    function handleUploadError(xhr, file, fileId, errorMessage) {
+      console.error(errorMessage);
+      
+      if (retryCount < MAX_RETRY_COUNT) {
+        // Implement exponential backoff with jitter
+        const jitter = Math.random() * 500; // Random jitter between 0-500ms
+        const actualDelay = Math.min(retryDelay + jitter, MAX_RETRY_DELAY);
+        
+        showToast(`Upload error. Retrying in ${Math.round(actualDelay/1000)} seconds... (Attempt ${retryCount+1}/${MAX_RETRY_COUNT})`, 'warning');
+        
+        setTimeout(() => {
+          retryCount++;
+          retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY); // Exponential backoff
+          uploadChunk(file, fileId);
+        }, actualDelay);
+      } else {
+        showToast('Upload failed after multiple attempts. Please try again later.', 'error');
         isUploading = false;
-        chunkUploadAborted = true;
-        resetUploadUI();
-        showToast('Upload cancelled.', 'error');
-        document.querySelector('.progress-container').style.display = 'none';
-        document.getElementById('uploadInfo').innerHTML = '';
-      };
-      
-      // Send the chunk data
-      xhr.send(chunk);
-    }
-    
-    function formatTime(seconds) {
-      if (!isFinite(seconds) || seconds < 0) return 'calculating...';
-      if (seconds < 60) return Math.round(seconds) + ' sec';
-      
-      const minutes = Math.floor(seconds / 60);
-      if (minutes < 60) return minutes + ' min ' + Math.round(seconds % 60) + ' sec';
-      
-      const hours = Math.floor(minutes / 60);
-      return hours + ' hr ' + (minutes % 60) + ' min';
-    }
-    
-    function handleUploadError(message) {
-      isUploading = false;
-      resetUploadUI();
-      showToast(message, 'error');
-      document.getElementById('uploadInfo').innerHTML = '';
-    }
-
-    function cancelUpload() {
-      if (xhr && xhr.readyState !== 4) {
-        chunkUploadAborted = true;
-        xhr.abort();
+        updateProgress();
       }
     }
 
-    function resetUploadUI() {
-      document.getElementById('uploadButton').disabled = false;
-      document.getElementById('uploadButton').innerHTML = '<i class="fas fa-cloud-upload-alt"></i> Upload File';
-      document.getElementById('cancelButton').style.display = 'none';
+    function updateProgress(uploadedBytes, totalBytes) {
+      if (!isUploading) {
+        // Reset progress bar when not uploading
+        document.querySelector('.progress-bar').style.width = '0%';
+        document.getElementById('uploadInfo').textContent = '';
+        updateUploadButtonState(false);
+        return;
+      }
+      
+      const overallPercent = Math.round((uploadedBytes / totalBytes) * 100);
+      
+      // Calculate average speed from rolling window
+      const avgSpeed = uploadSpeeds.length > 0 
+        ? uploadSpeeds.reduce((sum, speed) => sum + speed, 0) / uploadSpeeds.length 
+        : 0;
+      
+      // Calculate ETA based on current speed
+      const remainingBytes = totalBytes - uploadedBytes;
+      const estimatedTimeRemaining = avgSpeed > 0 ? remainingBytes / avgSpeed : 0;
+      
+      // Format values for display
+      const speedText = formatSize(avgSpeed) + '/s';
+      const remainingText = formatSize(remainingBytes);
+      const etaText = formatTime(estimatedTimeRemaining);
+      const chunkText = `Chunk ${currentChunk + 1}/${totalChunks}`;
+      
+      // Only update UI if not throttled or once every second if throttled
+      const now = Date.now();
+      if (!isThrottled || (now - lastUIUpdate > 1000)) {
+        document.querySelector('.progress-bar').style.width = overallPercent + '%';
+        document.getElementById('uploadInfo').innerHTML = 
+          `<i class="fas fa-info-circle"></i> ${overallPercent}% complete • ${chunkText} • ${speedText} • ${remainingText} remaining • ETA: ${etaText}`;
+        
+        lastUIUpdate = now;
+      }
     }
-
+    
     function formatSize(bytes) {
-      if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + ' GB';
-      if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' MB';
-      if (bytes >= 1024) return (bytes / 1024).toFixed(2) + ' KB';
-      return bytes + ' B';
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+    
+    function formatTime(seconds) {
+      if (!isFinite(seconds) || seconds === 0) return 'calculating...';
+      
+      if (seconds < 60) return Math.round(seconds) + ' sec';
+      if (seconds < 3600) {
+        const minutes = Math.floor(seconds / 60);
+        const sec = Math.round(seconds % 60);
+        return `${minutes} min ${sec} sec`;
+      }
+      
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      return `${hours} hr ${minutes} min`;
     }
 
     function showHowTo() {
@@ -1229,6 +1240,15 @@
       
       // Removed auto-display of help dialog
     };
+
+    function cancelUpload() {
+      if (isUploading) {
+        chunkUploadAborted = true;
+        showToast('Upload cancelled.', 'info');
+        isUploading = false;
+        updateProgress();
+      }
+    }
   </script>
 </body>
 </html>

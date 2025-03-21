@@ -4,6 +4,7 @@ const path = require('path');
 const { parse } = require('url');
 const { exec } = require('child_process');
 const os = require('os');
+const rimraf = require('rimraf');
 
 // Create temp directory for chunk uploads
 const TEMP_DIR = path.join(os.tmpdir(), 'file-server-chunks');
@@ -14,8 +15,15 @@ if (!fs.existsSync(TEMP_DIR)) {
 // Track uploads in memory to improve performance
 const uploadTracker = new Map();
 
+// Constants for performance tuning
+const HIGH_WATER_MARK = 2 * 1024 * 1024; // 2MB buffer for write streams
+const WRITE_STREAM_OPTIONS = {
+  highWaterMark: HIGH_WATER_MARK,
+  flags: 'w'
+};
+
 // Performance settings
-const HIGH_WATER_MARK = 1024 * 1024; // 1MB buffer for write streams
+const LOW_WATER_MARK = 1024 * 1024; // 1MB threshold before resuming writes
 const UPLOAD_TIMEOUT = 24 * 60 * 60 * 1000; // 24 hours timeout for uploads
 
 const server = http.createServer((req, res) => {
@@ -101,28 +109,39 @@ const server = http.createServer((req, res) => {
   // New endpoint for chunk uploads
   else if (req.method === 'POST' && pathname === '/upload-chunk') {
     try {
-      // Use nodejs stream capabilities for efficient uploads
+      // Set CORS headers for chunked uploads
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-File-Name, X-Chunk-Index, X-Total-Chunks, X-File-Path, Content-Disposition, Content-Range, X-File-Id');
+      
       // Extract metadata from headers
-      const fileName = req.headers['x-file-name'];
-      const chunkIndex = parseInt(req.headers['x-chunk-index']);
-      const totalChunks = parseInt(req.headers['x-total-chunks']);
-      const targetPath = req.headers['x-file-path'] || getCurrentPath();
+      const fileName = decodeURIComponent(req.headers['x-file-name'] || '');
+      const chunkIndex = parseInt(req.headers['x-chunk-index'] || '0', 10);
+      const totalChunks = parseInt(req.headers['x-total-chunks'] || '1', 10);
+      const fileId = req.headers['x-file-id'] || Date.now().toString();
+      const targetPath = query.path || getCurrentPath();
       
-      if (!fileName || isNaN(chunkIndex) || isNaN(totalChunks)) {
+      // Verify file name
+      if (!fileName) {
+        console.error('Missing file name');
         res.writeHead(400);
-        return res.end(JSON.stringify({ error: 'Missing or invalid headers' }));
+        return res.end(JSON.stringify({ success: false, error: 'Missing file name' }));
+      }
+
+      // Create upload directory if it doesn't exist
+      const uploadDir = path.join(process.cwd(), 'uploads');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
       }
       
-      // For non-first chunks, try to get fileId from header
-      let fileId;
-      if (chunkIndex > 0 && req.headers['x-file-id']) {
-        fileId = req.headers['x-file-id'];
-        console.log(`Using provided fileId for chunk ${chunkIndex}: ${fileId}`);
-      } else {
-        // For first chunk, create a new fileId
-        fileId = fileName + '-' + totalChunks;
-        console.log(`Generated new fileId for first chunk: ${fileId}`);
+      // Use the temp directory for chunks
+      const tempDir = path.join(os.tmpdir(), 'file-server-chunks', fileId);
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
       }
+      
+      // Temporary chunk file path
+      const chunkPath = path.join(tempDir, `chunk-${chunkIndex}`);
       
       // If first chunk, initialize the upload tracker
       if (chunkIndex === 0) {
@@ -140,7 +159,8 @@ const server = http.createServer((req, res) => {
           receivedChunks: new Set(),
           writeStream: fs.createWriteStream(finalFilePath, { 
             highWaterMark: HIGH_WATER_MARK,
-            flags: 'w'
+            flags: 'w',
+            autoClose: false
           }),
           totalChunks: totalChunks,
           createdAt: Date.now(),
@@ -177,7 +197,9 @@ const server = http.createServer((req, res) => {
             receivedChunks: new Set(),
             writeStream: fs.createWriteStream(finalFilePath, { 
               highWaterMark: HIGH_WATER_MARK,
-              flags: 'w'
+              lowWaterMark: LOW_WATER_MARK,
+              flags: 'w',
+              autoClose: false
             }),
             totalChunks: totalChunks,
             createdAt: Date.now(),
@@ -210,40 +232,63 @@ const server = http.createServer((req, res) => {
       }
       
       // Pipe the data directly from request to file stream
-      req.pipe(upload.writeStream, { end: false });
+      let dataBuffer = Buffer.alloc(0);
+      
+      // Collect all chunk data first
+      req.on('data', (chunk) => {
+        dataBuffer = Buffer.concat([dataBuffer, chunk]);
+      });
       
       // Track when the chunk is done
-      req.on('end', () => {
-        // Mark this chunk as received
-        upload.receivedChunks.add(chunkIndex);
-        
-        // Check if all chunks have been received
-        if (upload.receivedChunks.size === upload.totalChunks) {
-          // Close the file stream
-          upload.writeStream.end(() => {
-            console.log(`Upload complete: ${fileName} (${fileId})`);
-          });
+      req.on('end', async () => {
+        try {
+          // Write data to the file with backpressure handling
+          const canContinue = upload.writeStream.write(dataBuffer);
           
-          // Clear the timeout and remove from tracker
-          clearTimeout(upload.timeout);
-          uploadTracker.delete(fileId);
+          // Handle backpressure if needed
+          if (!canContinue) {
+            // Wait for drain event before proceeding
+            await new Promise(resolve => upload.writeStream.once('drain', resolve));
+          }
           
-          // Send success response
-          res.writeHead(200);
-          res.end(JSON.stringify({
-            success: true,
-            message: 'File upload complete',
-            filePath: upload.finalPath
-          }));
-        } else {
-          // More chunks expected
-          res.writeHead(200);
-          res.end(JSON.stringify({
-            success: true,
-            message: `Chunk ${chunkIndex + 1}/${totalChunks} received`,
-            received: upload.receivedChunks.size,
-            fileId: fileId
-          }));
+          // Clear buffer
+          dataBuffer = null;
+          
+          // Mark this chunk as received
+          upload.receivedChunks.add(chunkIndex);
+          
+          // Check if all chunks have been received
+          if (upload.receivedChunks.size === upload.totalChunks) {
+            // Close the file stream
+            upload.writeStream.end(() => {
+              console.log(`Upload complete: ${fileName} (${fileId})`);
+            });
+            
+            // Clear the timeout and remove from tracker
+            clearTimeout(upload.timeout);
+            uploadTracker.delete(fileId);
+            
+            // Send success response
+            res.writeHead(200);
+            res.end(JSON.stringify({
+              success: true,
+              message: 'File upload complete',
+              filePath: upload.finalPath
+            }));
+          } else {
+            // More chunks expected
+            res.writeHead(200);
+            res.end(JSON.stringify({
+              success: true,
+              message: `Chunk ${chunkIndex + 1}/${totalChunks} received`,
+              received: upload.receivedChunks.size,
+              fileId: fileId
+            }));
+          }
+        } catch (error) {
+          console.error('Error in chunk upload:', error);
+          res.writeHead(500);
+          res.end(`Server error during upload: ${error.message}`);
         }
       });
       
