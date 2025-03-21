@@ -22,7 +22,7 @@ const server = http.createServer((req, res) => {
   // Set CORS headers for cross-tab uploads
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-File-Name, X-Chunk-Index, X-Total-Chunks, X-File-Path, Content-Disposition, Content-Range');
+  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-File-Name, X-Chunk-Index, X-Total-Chunks, X-File-Path, Content-Disposition, Content-Range, X-File-Id');
   
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
@@ -113,8 +113,16 @@ const server = http.createServer((req, res) => {
         return res.end(JSON.stringify({ error: 'Missing or invalid headers' }));
       }
       
-      // Generate a unique ID for this file upload
-      const fileId = fileName + '-' + totalChunks + '-' + Math.floor(Date.now() / 1000);
+      // For non-first chunks, try to get fileId from header
+      let fileId;
+      if (chunkIndex > 0 && req.headers['x-file-id']) {
+        fileId = req.headers['x-file-id'];
+        console.log(`Using provided fileId for chunk ${chunkIndex}: ${fileId}`);
+      } else {
+        // For first chunk, create a new fileId
+        fileId = fileName + '-' + totalChunks;
+        console.log(`Generated new fileId for first chunk: ${fileId}`);
+      }
       
       // If first chunk, initialize the upload tracker
       if (chunkIndex === 0) {
@@ -233,7 +241,8 @@ const server = http.createServer((req, res) => {
           res.end(JSON.stringify({
             success: true,
             message: `Chunk ${chunkIndex + 1}/${totalChunks} received`,
-            received: upload.receivedChunks.size
+            received: upload.receivedChunks.size,
+            fileId: fileId
           }));
         }
       });
@@ -350,13 +359,12 @@ const server = http.createServer((req, res) => {
           res.end('File not found');
         } else {
           res.writeHead(500);
-          res.end(`Server error: ${err.code}`);
+          res.end(`Server error: ${err.message}`);
         }
-        return;
+      } else {
+        res.writeHead(200, { 'Content-Type': contentType });
+        res.end(data);
       }
-      
-      res.writeHead(200, { 'Content-Type': contentType });
-      res.end(data);
     });
   }
   

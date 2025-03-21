@@ -878,13 +878,11 @@
     const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks (increased from 1MB)
     let lastVisibilityNotification = 0; // Track when last notification was shown
     
-    // Page visibility handling
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    
     // Track throttling state
     let isThrottled = false;
     let lastUploadTime = 0;
     const THROTTLE_THRESHOLD = 1000; // ms
+    let currentFileId = null; // Store the fileId returned from the server
     
     function handleVisibilityChange() {
       if (!isUploading) return;
@@ -1005,6 +1003,11 @@
       xhr.setRequestHeader('X-Total-Chunks', totalChunks.toString());
       xhr.setRequestHeader('X-File-Path', document.getElementById('targetPath').value);
       
+      // Add fileId header if we're sending chunk after the first one
+      if (currentFileId && currentChunk > 0) {
+        xhr.setRequestHeader('X-File-Id', currentFileId);
+      }
+      
       xhr.upload.onprogress = function(event) {
         // Only update UI if not throttled or enough time has passed
         const now = Date.now();
@@ -1051,6 +1054,19 @@
           // Update UI for completed chunk
           if (!isThrottled) {
             updateUploadProgressUI();
+          }
+          
+          // Try to parse the response and get fileId if this is the first chunk
+          if (currentChunk === 0) {
+            try {
+              const response = JSON.parse(xhr.responseText);
+              if (response.fileId) {
+                currentFileId = response.fileId;
+                console.log("Saved fileId:", currentFileId);
+              }
+            } catch (e) {
+              console.error("Error parsing response:", e);
+            }
           }
           
           // Chunk uploaded successfully
