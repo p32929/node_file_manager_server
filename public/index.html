@@ -293,20 +293,46 @@
 
     /* Progress Bar */
     .progress-container {
-      margin-top: 15px;
-      background-color: var(--gray);
-      border-radius: 8px;
+      margin: 10px 0;
+      width: 100%;
+      background-color: #f5f5f5;
+      border-radius: 4px;
       overflow: hidden;
-      height: 8px;
-      display: none;
+      height: 20px;
     }
-
+    
     .progress-bar {
       height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, var(--primary), var(--success));
-      border-radius: 8px;
-      transition: width 0.3s;
+      width: 0;
+      background-color: #4CAF50;
+      transition: width 0.3s ease;
+    }
+    
+    .upload-info-container {
+      height: 24px;
+      margin: 5px 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 14px;
+      line-height: 24px;
+    }
+    
+    /* Add this to your existing CSS styles */
+    .inline-status {
+      display: inline-block;
+      margin-right: 8px;
+      white-space: nowrap;
+    }
+    
+    .status-divider {
+      display: inline-block;
+      margin: 0 5px;
+      color: #999;
+    }
+    
+    .resume-button-container {
+      margin-top: 8px;
     }
 
     /* Upload Info */
@@ -668,7 +694,7 @@
       <div class="progress-bar"></div>
     </div>
 
-    <div class="upload-info" id="uploadInfo"></div>
+    <div class="upload-info-container" id="uploadInfo"></div>
       </div>
     </div>
   </div>
@@ -1068,11 +1094,11 @@
     function handleUploadDisappeared() {
       console.error('Upload disappeared from server');
       
-      // Show error in UI
+      // Show error in UI with consistent layout
       document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-exclamation-circle"></i> Upload has been lost. Server may have restarted or timed out the connection.`;
+        `<i class="fas fa-exclamation-circle"></i> <span class="inline-status">Upload has been lost</span>`;
       
-      // Add resume button
+      // Add resume button in a separate container below
       showResumeOption();
       
       // Update internal state
@@ -1092,20 +1118,12 @@
     function handleServerError(error) {
       console.error('Server reported upload error:', error);
       
-      // Show detailed error in UI
+      // Show detailed error in UI - single line format
       document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-exclamation-circle"></i> Upload failed: ${error.message || 'Unknown error'}`;
+        `<i class="fas fa-exclamation-circle"></i> <span class="inline-status">Error: ${error.message || 'Unknown error'}</span>` +
+        (error.code ? `<span class="status-divider">|</span><span class="inline-status">Code: ${error.code}</span>` : '');
       
-      if (error.code) {
-        document.getElementById('uploadInfo').innerHTML += `<br><small>Error code: ${error.code}</small>`;
-      }
-      
-      if (error.chunkIndex !== undefined) {
-        document.getElementById('uploadInfo').innerHTML += 
-          `<br><small>Error occurred at chunk ${error.chunkIndex + 1}</small>`;
-      }
-      
-      // Add resume button
+      // Add resume button in a separate container
       showResumeOption();
       
       // Update internal state
@@ -1126,11 +1144,15 @@
       const uploadInfo = document.getElementById('uploadInfo');
       
       // Don't add resume option if it's already there
-      if (uploadInfo.innerHTML.includes('resume-upload-btn')) {
+      if (document.getElementById('resume-upload-btn')) {
         return;
       }
       
-      // Create resume button inside toast
+      // Create a separate container for the resume button to prevent layout shifts
+      const resumeContainer = document.createElement('div');
+      resumeContainer.className = 'resume-button-container';
+      
+      // Create resume button
       const resumeBtn = document.createElement('button');
       resumeBtn.id = 'resume-upload-btn';
       resumeBtn.className = 'action-button';
@@ -1142,9 +1164,9 @@
         // If we still have the file in the input, restart the upload
         if (fileInput.files.length > 0 && uploadingFileName === fileInput.files[0].name) {
           uploadFile();
-          // Remove the resume button
-          const oldBtn = document.getElementById('resume-upload-btn');
-          if (oldBtn) oldBtn.remove();
+          // Remove the resume button container
+          const container = document.querySelector('.resume-button-container');
+          if (container) container.remove();
         } else {
           // Show message to select file again
           showToast('Please select the file again to restart the upload', 'warning');
@@ -1154,9 +1176,11 @@
         }
       };
       
-      // Add the button to the upload info element
-      uploadInfo.appendChild(document.createElement('br'));
-      uploadInfo.appendChild(resumeBtn);
+      // Add the button to the container
+      resumeContainer.appendChild(resumeBtn);
+      
+      // Add the container after the uploadInfo element
+      uploadInfo.parentNode.insertBefore(resumeContainer, uploadInfo.nextSibling);
     }
     
     // Track visibility changes
@@ -1235,8 +1259,14 @@
       document.querySelector('.progress-container').style.display = 'block';
       document.querySelector('.progress-bar').style.width = '0%';
       document.querySelector('.progress-bar').style.backgroundColor = '#4CAF50'; // Reset color
+      
+      // Remove any resume button that might exist
+      const resumeContainer = document.querySelector('.resume-button-container');
+      if (resumeContainer) resumeContainer.remove();
+      
+      // Set initial upload info in single-line format
       document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-info-circle"></i> Starting upload of ${formatSize(file.size)}...`;
+        `<i class="fas fa-info-circle"></i> <span class="inline-status">Starting upload of ${formatSize(file.size)}...</span>`;
       
       // Start the upload immediately without delay
       uploadChunk(file);
@@ -1515,7 +1545,7 @@
 
       // Update progress immediately to show we're starting this chunk
       document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-upload"></i> Uploading chunk ${currentChunk + 1}/${totalChunks} (${formatSize(chunkSize)})...`;
+        `<i class="fas fa-upload"></i> <span class="inline-status">Uploading chunk ${currentChunk + 1}/${totalChunks}</span><span class="status-divider">|</span><span class="inline-status">${formatSize(chunkSize)}</span>`;
 
       // Record the start time for this chunk
       const chunkStartTime = Date.now();
@@ -1700,6 +1730,10 @@
               isUploading = false;
               showToast(`Upload of ${file.name} completed successfully!`, 'success');
               
+              // Update info with completion message in single-line format
+              document.getElementById('uploadInfo').innerHTML = 
+                `<i class="fas fa-check-circle"></i> <span class="inline-status">Upload complete</span><span class="status-divider">|</span><span class="inline-status">${formatSize(file.size)} uploaded</span>`;
+              
               // Reset UI
               updateUploadButtonState(false);
               
@@ -1768,7 +1802,7 @@
           
           // Show retry message
           document.getElementById('uploadInfo').innerHTML = 
-            `<i class="fas fa-sync-alt"></i> Retrying chunk ${currentChunk + 1}/${totalChunks} (Attempt ${retryCount}/${MAX_RETRY_COUNT})...`;
+            `<i class="fas fa-sync-alt"></i> <span class="inline-status">Retrying chunk ${currentChunk + 1}/${totalChunks}</span><span class="status-divider">|</span><span class="inline-status">Attempt ${retryCount}/${MAX_RETRY_COUNT}</span>`;
           
           // Exponential backoff
           const delay = Math.min(retryDelay * Math.pow(2, retryCount - 1), MAX_RETRY_DELAY);
@@ -1784,7 +1818,7 @@
           // Out of retries, show error
           isUploading = false;
           document.getElementById('uploadInfo').innerHTML = 
-            `<i class="fas fa-exclamation-circle"></i> Upload failed after ${MAX_RETRY_COUNT} attempts.`;
+            `<i class="fas fa-exclamation-circle"></i> <span class="inline-status">Upload failed after ${MAX_RETRY_COUNT} attempts</span>`;
           
           // Show more detailed error
           showToast(errorMessage, 'error', errorDetails.details);
@@ -1855,9 +1889,15 @@
           const speedText = formatSize(avgSpeed) + '/s';
           const etaText = formatTime(eta);
           
+          // Create a single line status that includes all information
           document.getElementById('uploadInfo').innerHTML = 
-            `<i class="fas fa-upload"></i> Uploading... ${percent}% complete (${speedText})
-             <br>Chunk ${currentChunk + 1}/${totalChunks} - ETA: ${etaText}`;
+            `<i class="fas fa-upload"></i> <span class="inline-status">${percent}%</span>` +
+            `<span class="status-divider">|</span>` +
+            `<span class="inline-status">${speedText}</span>` +
+            `<span class="status-divider">|</span>` +
+            `<span class="inline-status">Chunk ${currentChunk + 1}/${totalChunks}</span>` +
+            `<span class="status-divider">|</span>` +
+            `<span class="inline-status">ETA: ${etaText}</span>`;
         }
       }
       
