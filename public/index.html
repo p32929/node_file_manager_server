@@ -1407,6 +1407,15 @@
         xhr.setRequestHeader('X-Total-Chunks', 1);
         xhr.setRequestHeader('Content-Type', 'application/octet-stream'); // Ensure binary data is sent correctly
         
+        // Performance optimizations
+        xhr.setRequestHeader('X-Client-Speed', navigator.connection?.downlink || 10); // Estimated connection speed
+        
+        // Disable timeout - important for large files
+        xhr.timeout = 0;
+        
+        // Enable binary transfer
+        xhr.responseType = 'arraybuffer';
+        
         // Update progress display
         document.getElementById('modalUploadInfo').innerHTML = `
           <div class="upload-status">

@@ -35,20 +35,20 @@ const systemConfig = {
     // Calculate optimal buffer size based on available system memory and client speed
     const memPercentage = this.freeMemory / this.totalMemory;
     const baseSize = memPercentage > 0.5 ? 
-      16 * 1024 * 1024 : // High memory availability - use larger buffers (16MB)
+      32 * 1024 * 1024 : // High memory availability - use larger buffers (32MB)
       (memPercentage > 0.3 ? 
-        8 * 1024 * 1024 : // Medium memory availability (8MB)
-        4 * 1024 * 1024); // Low memory availability (4MB)
+        16 * 1024 * 1024 : // Medium memory availability (16MB)
+        8 * 1024 * 1024); // Low memory availability (8MB)
     
     // Adjust based on client speed if available
     if (clientSpeed && clientSpeed > 0) {
       // Higher speeds need larger buffers to maintain throughput
-      const speedAdjustment = Math.min(clientSpeed / (2 * 1024 * 1024), 4); // Scale factor 1-4
+      const speedAdjustment = Math.min(clientSpeed / (1 * 1024 * 1024), 8); // Scale factor 1-8
       return Math.ceil(baseSize * speedAdjustment);
     }
     
     // If no client speed, use CPU count as a scaling factor
-    return Math.ceil(baseSize * Math.min(this.cpuCount / 4, 2));
+    return Math.ceil(baseSize * Math.min(this.cpuCount / 2, 4));
   },
   
   getLowWaterMark: function(highWaterMark) {
@@ -344,6 +344,85 @@ const server = http.createServer((req, res) => {
       
       // Final file path (where the file will be saved)
       const finalFilePath = path.join(outputDir, fileName);
+      
+      // Check if this is a single-chunk direct upload (non-chunked)
+      const isSingleChunkUpload = totalChunks === 1 && chunkIndex === 0;
+      
+      if (isSingleChunkUpload) {
+        console.log(`Starting direct file upload for ${fileName} to ${finalFilePath}`);
+        
+        // Get optimized write stream options for this client
+        const writeStreamOptions = getWriteStreamOptions(clientSpeed, chunkSize);
+        
+        try {
+          // Create write stream with optimized settings
+          const writeStream = fs.createWriteStream(finalFilePath, writeStreamOptions);
+          
+          // Add error handler
+          writeStream.on('error', (writeError) => {
+            console.error(`Write stream error for ${fileName}:`, writeError);
+            if (!res.headersSent) {
+              sendErrorResponse(
+                res,
+                500,
+                `File write error: ${writeError.message}`,
+                writeError.stack,
+                'WRITE_STREAM_ERROR'
+              );
+            }
+          });
+          
+          // Pipe the request directly to the file
+          req.pipe(writeStream);
+          
+          // When the request finishes, close the file and respond
+          req.on('end', () => {
+            writeStream.end();
+            
+            // Wait for write to complete before responding
+            writeStream.on('finish', () => {
+              console.log(`File upload complete: ${fileName} at ${finalFilePath}`);
+              console.log(`File size: ${fs.statSync(finalFilePath).size} bytes`);
+              
+              if (!res.headersSent) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  success: true,
+                  message: 'File upload complete',
+                  filePath: finalFilePath
+                }));
+              }
+            });
+          });
+          
+          // Handle errors on the request
+          req.on('error', (reqError) => {
+            console.error(`Request error for ${fileName}:`, reqError);
+            writeStream.end();
+            
+            if (!res.headersSent) {
+              sendErrorResponse(
+                res,
+                500,
+                `Upload error: ${reqError.message}`,
+                reqError.stack,
+                'REQUEST_ERROR'
+              );
+            }
+          });
+          
+          return; // Exit early as we're handling the response in the callbacks
+        } catch (streamError) {
+          console.error(`Error creating write stream for ${finalFilePath}:`, streamError);
+          return sendErrorResponse(
+            res,
+            500,
+            `Failed to create file stream: ${streamError.message}`,
+            streamError.stack,
+            'STREAM_CREATE_ERROR'
+          );
+        }
+      }
       
       // If first chunk, initialize the upload tracker
       if (chunkIndex === 0) {
