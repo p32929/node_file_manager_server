@@ -133,7 +133,70 @@ const server = http.createServer(async (req, res) => {
   const { pathname, query } = parse(req.url, true);
 
   // -------------------------------------------
-  // 1) Speed Test Endpoint
+  // 1) Cancel Upload Endpoint
+  // -------------------------------------------
+  if (req.method === 'POST' && pathname === '/cancel-upload') {
+    try {
+      const fileId = query.fileId;
+      const fileName = query.fileName ? decodeURIComponent(query.fileName) : '';
+      
+      console.log(`Cancelling upload for fileId: ${fileId}, fileName: ${fileName}`);
+      
+      if (fileId && uploadTracker.has(fileId)) {
+        const upload = uploadTracker.get(fileId);
+        
+        // Close the write stream if open
+        if (upload.writeStream) {
+          try {
+            upload.writeStream.end();
+          } catch (err) {
+            console.error('Error closing write stream:', err);
+          }
+        }
+        
+        // Clean up the file if it exists
+        cleanupFile(upload.finalPath);
+        
+        // Clean up temporary chunks if any
+        const tempDir = path.dirname(upload.finalPath);
+        const tempPrefix = path.basename(upload.finalPath) + '.part';
+        try {
+          const files = fs.readdirSync(tempDir);
+          for (const file of files) {
+            if (file.startsWith(tempPrefix)) {
+              fs.unlinkSync(path.join(tempDir, file));
+              console.log(`Deleted temp chunk: ${file}`);
+            }
+          }
+        } catch (err) {
+          console.error('Error cleaning up temp chunks:', err);
+        }
+        
+        // Remove from tracker
+        clearTimeout(upload.timeout);
+        uploadTracker.delete(fileId);
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: 'Upload cancelled and temporary files cleaned up'
+        }));
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: 'No active upload found with this ID'
+        }));
+      }
+    } catch (error) {
+      console.error('Error cancelling upload:', error);
+      sendError(res, 500, 'Server error cancelling upload', error.message);
+    }
+    return;
+  }
+
+  // -------------------------------------------
+  // 2) Speed Test Endpoint
   // -------------------------------------------
   if (req.method === 'GET' && pathname === '/speed-test') {
     try {
@@ -167,7 +230,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------
-  // 2) Serve index.html at root
+  // 3) Serve index.html at root
   // -------------------------------------------
   else if (req.method === 'GET' && pathname === '/') {
     fs.readFile('./public/index.html', (err, data) => {
@@ -181,7 +244,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------
-  // 3) List drives (Windows only)
+  // 4) List drives (Windows only)
   // -------------------------------------------
   else if (req.method === 'GET' && pathname === '/list-drives') {
     if (process.platform === 'win32') {
@@ -202,7 +265,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------
-  // 4) List folders
+  // 5) List folders
   // -------------------------------------------
   else if (req.method === 'GET' && pathname === '/list-folders') {
     let currentPath = query.path || '/';
@@ -224,7 +287,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------
-  // 5) Chunked/Single-chunk upload
+  // 6) Chunked/Single-chunk upload
   // -------------------------------------------
   else if (req.method === 'POST' && pathname === '/upload-chunk') {
     try {
@@ -380,7 +443,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------
-  // 6) Check upload status
+  // 7) Check upload status
   // -------------------------------------------
   else if (req.method === 'GET' && pathname === '/check-upload') {
     const fileId = query.fileId;
@@ -411,7 +474,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------
-  // 7) Report upload error
+  // 8) Report upload error
   // -------------------------------------------
   else if (req.method === 'GET' && pathname === '/report-upload-error') {
     const fileId = query.fileId;
@@ -433,7 +496,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------
-  // 8) List files in a directory
+  // 9) List files in a directory
   // -------------------------------------------
   else if (req.method === 'GET' && pathname === '/list-files') {
     const dirPath = query.path || getCurrentPath();
@@ -464,7 +527,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------
-  // 9) Fallback: serve static from ./public
+  // 10) Fallback: serve static from ./public
   // -------------------------------------------
   else if (req.method === 'GET') {
     let filePath = '.' + pathname;
@@ -498,7 +561,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------
-  // 10) 404 Not Found
+  // 11) 404 Not Found
   // -------------------------------------------
   else {
     res.writeHead(404);
