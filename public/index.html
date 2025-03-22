@@ -1710,12 +1710,6 @@
       const chunkStartTime = Date.now();
 
       try {
-        // Create FormData
-        const formData = new FormData();
-        const tempFileName = file.name + '.' + Date.now();
-        formData.append('file', chunk, tempFileName);
-        console.log('FormData created successfully with temp file name:', tempFileName);
-      
         // Prepare upload
         const xhr = new XMLHttpRequest();
         
@@ -1724,7 +1718,7 @@
         console.log('Using target path for upload:', targetPath);
         
         // Build the URL including target path
-        const uploadUrl = `/upload-chunk?path=${encodeURIComponent(targetPath || '/')}`;
+        const uploadUrl = `/upload-chunk?path=${encodeURIComponent(targetPath || '/')}&originalFileName=${encodeURIComponent(file.name)}`;
         console.log('Opening XHR connection to', uploadUrl);
         
         xhr.open('POST', uploadUrl, true);
@@ -1733,6 +1727,7 @@
         xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
         xhr.setRequestHeader('X-Chunk-Index', currentChunk);
         xhr.setRequestHeader('X-Total-Chunks', totalChunks);
+        xhr.setRequestHeader('Content-Type', 'application/octet-stream'); // Ensure binary data is sent correctly
         
         // Include adaptive information for server optimization
         const avgSpeed = speedSamples.length ? 
@@ -1747,7 +1742,8 @@
           'X-Chunk-Index': currentChunk,
           'X-Total-Chunks': totalChunks,
           'X-Client-Speed': avgSpeed,
-          'X-Chunk-Size': chunkSize
+          'X-Chunk-Size': chunkSize,
+          'Content-Type': 'application/octet-stream'
         });
         
         // If it's not the first chunk, use the fileId
@@ -1981,8 +1977,8 @@
           }
         };
         
-        console.log('Sending XHR request with FormData');
-        xhr.send(formData);
+        console.log('Sending XHR request with raw binary data');
+        xhr.send(chunk);
         console.log('XHR request sent');
       } catch (error) {
         console.error('Error setting up chunk upload:', error);
