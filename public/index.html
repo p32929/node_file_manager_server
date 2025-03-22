@@ -2,164 +2,151 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Simple File Upload Server</title>
+  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
-  <style>
-    /* Basic styling for demo */
-    :root {
-      --primary: #4361ee;
-      --primary-light: #4895ef;
-      --primary-dark: #3f37c9;
-      --gray: #e9ecef;
-      --gray-dark: #6c757d;
-      --gray-light: #f8f9fa;
-      --text: #212529;
-      --warning: #f72585;
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              light: '#4895ef',
+              DEFAULT: '#4361ee',
+              dark: '#3f37c9',
+            },
+          },
+        },
+      },
     }
-    body {
-      font-family: 'Segoe UI', sans-serif;
-      background: var(--gray-light);
-      margin: 0; padding: 0;
-      color: var(--text);
-    }
-    header {
-      background: linear-gradient(135deg, var(--primary), var(--primary-light));
-      color: #fff;
-      padding: 20px;
-      text-align: center;
-      margin-bottom: 30px;
-      border-radius: 0 0 15px 15px;
-    }
-    header h1 { margin: 0; font-size: 26px; }
-    header p { margin: 5px 0 0; }
-    .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
-    .card {
-      background: #fff;
-      border-radius: 12px;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-      margin-bottom: 20px;
-    }
-    .card-header {
-      background: var(--gray);
-      padding: 15px;
-      font-size: 18px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .card-body { padding: 20px; }
-    button {
-      padding: 10px 15px;
-      border: none;
-      border-radius: 6px;
-      background: var(--primary);
-      color: #fff;
-      font-size: 14px;
-      cursor: pointer;
-      transition: background 0.3s;
-      margin-right: 5px;
-    }
-    button:hover {
-      background: var(--primary-dark);
-    }
-    button.secondary {
-      background: var(--gray-dark);
-    }
-    .breadcrumb {
-      display: flex;
-      gap: 8px;
-      font-size: 14px;
-      margin-bottom: 15px;
-    }
-    .breadcrumb span {
-      color: var(--primary-dark);
-      cursor: pointer;
-    }
-    .folder-list {
-      display: flex; flex-wrap: wrap; gap: 10px;
-    }
-    .folder {
-      padding: 10px 15px; background: #fff; border: 1px solid var(--gray);
-      border-radius: 6px; cursor: pointer; transition: all 0.2s;
-    }
-    .folder:hover { background: var(--gray); }
-    .file-input-area {
-      border: 2px dashed var(--gray-dark);
-      padding: 30px; text-align: center; border-radius: 8px;
-      background: var(--gray-light);
-      cursor: pointer;
-      margin-bottom: 10px;
-    }
-    .progress-container {
-      height: 20px; background: #ddd; border-radius: 8px; overflow: hidden;
-      margin: 10px 0; width: 100%;
-    }
-    .progress-bar {
-      height: 100%; width: 0%; background: #28a745; transition: width 0.3s;
-    }
-    #toast {
-      position: fixed; bottom: 20px; left: 20px;
-      background: #333; color: #fff; padding: 10px 15px;
-      border-radius: 8px; display: flex; align-items: center; gap: 10px;
-      opacity: 0; transform: translateY(100px); transition: all 0.3s;
-      z-index: 9999;
-    }
-    #toast.show { opacity: 1; transform: translateY(0); }
-    #toast.success { background: green; }
-    #toast.error { background: #dc3545; }
-    #toast.info { background: var(--primary); }
-  </style>
+  </script>
 </head>
-<body>
-  <header>
-    <h1><i class="fas fa-cloud-upload-alt"></i> Simple File Upload Server</h1>
-    <p>Upload files to any folder on your server</p>
+<body class="bg-gray-50 text-gray-800 min-h-screen">
+  <!-- Header -->
+  <header class="bg-gradient-to-r from-primary-dark to-primary-light text-white py-6 px-4 shadow-md">
+    <div class="max-w-5xl mx-auto">
+      <div class="flex items-center justify-center">
+        <i class="fas fa-cloud-upload-alt text-2xl mr-3 opacity-90"></i>
+        <h1 class="text-2xl font-semibold">Simple File Upload Server</h1>
+      </div>
+      <p class="text-center text-white/80 mt-1">Upload files to any folder on your server</p>
+    </div>
   </header>
-  <div class="container">
-    <!-- Explorer card -->
-    <div class="card" id="explorerCard">
-      <div class="card-header">
-        <div>File Explorer</div>
-        <button class="secondary" onclick="showHelp()">Help</button>
-      </div>
-      <div class="card-body">
-        <div class="breadcrumb" id="breadcrumb"></div>
-        <div id="folderContainer">
-          <div>Loading folders...</div>
-        </div>
-        <div style="margin-top: 15px;">
-          <button onclick="goBack()">Back</button>
-          <button onclick="goUp()">Up</button>
-          <button onclick="selectCurrentFolder()">Select This Folder</button>
-        </div>
-      </div>
-    </div>
-    <!-- Upload card -->
-    <div class="card" id="uploadCard" style="display:none;">
-      <div class="card-header">Upload File</div>
-      <div class="card-body">
-        <p>Selected folder: <span id="selectedFolderPath"></span></p>
-        <div class="file-input-area" 
-             id="dropZone" 
-             onclick="document.getElementById('fileInput').click()">
-          <p>Click or drag & drop a file here to upload</p>
-        </div>
-        <input type="file" id="fileInput" style="display:none;" onchange="onFileSelected()" />
-        <div id="fileInfo"></div>
-        <button id="startUploadBtn" onclick="startUpload()" style="display:none;">
-          Upload
-        </button>
-        <div class="progress-container" id="uploadProgress" style="display:none;">
-          <div class="progress-bar" id="uploadProgressBar"></div>
-        </div>
-        <div id="uploadStatus" style="font-size:14px; margin-top:10px;"></div>
-      </div>
-    </div>
-  </div>
 
-  <!-- Simple toast -->
-  <div id="toast"><i class="fas fa-check-circle"></i><span id="toastMsg"></span></div>
+  <main class="max-w-5xl mx-auto p-4 md:p-6">
+    <!-- Explorer card -->
+    <div id="explorerCard" class="bg-white rounded-xl shadow-sm border border-gray-100 mb-6 overflow-hidden">
+      <div class="flex items-center justify-between bg-gray-50 px-4 py-3 border-b border-gray-100">
+        <h2 class="text-lg font-medium text-gray-800">File Explorer</h2>
+        <button 
+          onclick="showHelp()" 
+          class="text-gray-500 hover:text-gray-700 bg-white border border-gray-200 px-3 py-1 rounded-md text-sm transition-colors flex items-center gap-1.5 hover:bg-gray-50">
+          <i class="fas fa-question-circle text-xs"></i>
+          <span>Help</span>
+        </button>
+      </div>
+      
+      <div class="p-4 md:p-5">
+        <!-- Path navigation -->
+        <div id="breadcrumb" class="text-sm text-primary-dark mb-4 p-2 bg-gray-50 rounded-md overflow-x-auto whitespace-nowrap"></div>
+        
+        <!-- Folder listing -->
+        <div id="folderContainer" class="min-h-[150px] border border-gray-100 rounded-lg p-4 bg-gray-50/50">
+          <div class="flex items-center justify-center h-[120px] text-gray-500">
+            <div class="flex items-center gap-2">
+              <i class="fas fa-spinner fa-spin text-primary"></i>
+              <span>Loading folders...</span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Navigation buttons -->
+        <div class="flex flex-wrap gap-2 mt-4">
+          <button 
+            onclick="goBack()" 
+            class="bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 px-4 py-2 rounded-lg flex items-center gap-1.5 transition-colors">
+            <i class="fas fa-arrow-left text-xs"></i>
+            <span>Back</span>
+          </button>
+          
+          <button 
+            onclick="goUp()" 
+            class="bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 px-4 py-2 rounded-lg flex items-center gap-1.5 transition-colors">
+            <i class="fas fa-arrow-up text-xs"></i>
+            <span>Up</span>
+          </button>
+          
+          <button 
+            onclick="selectCurrentFolder()" 
+            class="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded-lg flex items-center gap-1.5 transition-colors ml-auto">
+            <i class="fas fa-check text-xs"></i>
+            <span>Select This Folder</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Upload card -->
+    <div id="uploadCard" class="bg-white rounded-xl shadow-sm border border-gray-100 mb-6 overflow-hidden" style="display:none;">
+      <div class="bg-gray-50 px-4 py-3 border-b border-gray-100">
+        <h2 class="text-lg font-medium text-gray-800">Upload File</h2>
+      </div>
+      
+      <div class="p-4 md:p-5">
+        <!-- Selected path -->
+        <div class="mb-4 px-3 py-2 bg-gray-50 rounded-md text-sm">
+          <span class="text-gray-500">Selected folder:</span> 
+          <span id="selectedFolderPath" class="text-gray-900 font-medium ml-1"></span>
+        </div>
+        
+        <!-- Drop zone -->
+        <div 
+          id="dropZone" 
+          onclick="document.getElementById('fileInput').click()" 
+          class="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer transition-colors hover:border-primary hover:bg-blue-50/30 group">
+          <div class="flex flex-col items-center">
+            <i class="fas fa-cloud-upload-alt text-4xl text-gray-300 group-hover:text-primary transition-colors mb-3"></i>
+            <p class="text-gray-500 group-hover:text-gray-700">Click or drag & drop a file here to upload</p>
+            <p class="text-xs text-gray-400 mt-2">Maximum file size depends on your server configuration</p>
+          </div>
+        </div>
+        
+        <input type="file" id="fileInput" class="hidden" onchange="onFileSelected()" />
+        
+        <!-- File info -->
+        <div id="fileInfo" class="mt-4"></div>
+        
+        <!-- Upload button -->
+        <button 
+          id="startUploadBtn" 
+          onclick="startUpload()" 
+          class="mt-4 bg-primary hover:bg-primary-dark text-white px-6 py-2 rounded-lg flex items-center gap-2 transition-colors hidden">
+          <i class="fas fa-upload"></i>
+          <span>Upload</span>
+        </button>
+        
+        <!-- Progress bar -->
+        <div id="uploadProgress" class="mt-5 hidden">
+          <div class="flex justify-between text-xs text-gray-500 mb-1">
+            <span>Progress</span>
+            <span id="uploadPercent">0%</span>
+          </div>
+          <div class="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+            <div id="uploadProgressBar" class="h-full w-0 bg-green-500 transition-all duration-300"></div>
+          </div>
+          <div id="uploadStatus" class="text-sm text-gray-600 mt-2"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Toast notifications -->
+  <div id="toast" class="fixed bottom-4 left-4 flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-white opacity-0 transform translate-y-8 transition-all duration-300 z-50 max-w-md">
+    <i class="fas fa-check-circle"></i>
+    <span id="toastMsg"></span>
+  </div>
 
   <script>
     const API_BASE = window.location.origin;
@@ -172,43 +159,64 @@
 
     function loadFolders(dir, pushHistory=true) {
       const container = document.getElementById('folderContainer');
-      container.innerHTML = '<div>Loading...</div>';
+      container.innerHTML = `
+        <div class="flex items-center justify-center h-[120px] text-gray-500">
+          <div class="flex items-center gap-2">
+            <i class="fas fa-spinner fa-spin text-primary"></i>
+            <span>Loading folders...</span>
+          </div>
+        </div>`;
+      
       if (pushHistory && currentPath !== dir) {
         historyStack.push(currentPath);
       }
+      
       fetch(`/list-folders?path=${encodeURIComponent(dir)}`)
         .then(r => r.json())
         .then(data => {
           if (data.error) {
-            container.innerHTML = `<div style="color:red;">Error: ${data.error}</div>`;
+            container.innerHTML = `<div class="text-red-500 p-4">Error: ${data.error}</div>`;
             return;
           }
+          
           currentPath = data.path;
+          
           if (data.isRoot) {
             // On Windows root, fetch drives
             return loadDrives();
           }
+          
           updateBreadcrumb(currentPath);
+          
           if (!data.folders || data.folders.length === 0) {
-            container.innerHTML = `<div>No subfolders here.</div>`;
+            container.innerHTML = `
+              <div class="flex flex-col items-center justify-center h-[120px] text-gray-500">
+                <i class="fas fa-folder-open text-gray-300 text-4xl mb-2"></i>
+                <span>No subfolders here</span>
+              </div>`;
           } else {
             container.innerHTML = '';
             const list = document.createElement('div');
-            list.className = 'folder-list';
+            list.className = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3';
+            
             data.folders.forEach(folderName => {
               const div = document.createElement('div');
-              div.className = 'folder';
-              div.innerText = folderName;
+              div.className = 'bg-white border border-gray-200 rounded-lg p-3 cursor-pointer hover:border-primary hover:shadow-sm transition-all flex items-center gap-2 truncate';
+              div.innerHTML = `
+                <i class="fas fa-folder text-yellow-500"></i>
+                <span class="truncate">${folderName}</span>
+              `;
               div.onclick = () => {
                 loadFolders(pathJoin(currentPath, folderName));
               };
               list.appendChild(div);
             });
+            
             container.appendChild(list);
           }
         })
         .catch(err => {
-          container.innerHTML = `<div style="color:red;">Failed to load folders: ${err}</div>`;
+          container.innerHTML = `<div class="text-red-500 p-4">Failed to load folders: ${err}</div>`;
         });
     }
 
@@ -218,25 +226,35 @@
         .then(data => {
           updateBreadcrumb('My Computer');
           const container = document.getElementById('folderContainer');
-          container.innerHTML = '';
+          
           if (data.drives && data.drives.length) {
+            container.innerHTML = '';
             const list = document.createElement('div');
-            list.className = 'folder-list';
+            list.className = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3';
+            
             data.drives.forEach(drv => {
               const div = document.createElement('div');
-              div.className = 'folder';
-              div.innerText = drv;
+              div.className = 'bg-white border border-gray-200 rounded-lg p-3 cursor-pointer hover:border-primary hover:shadow-sm transition-all flex items-center gap-2';
+              div.innerHTML = `
+                <i class="fas fa-hdd text-blue-500"></i>
+                <span>${drv}</span>
+              `;
               div.onclick = () => loadFolders(drv);
               list.appendChild(div);
             });
+            
             container.appendChild(list);
           } else {
-            container.innerHTML = 'No drives found.';
+            container.innerHTML = `
+              <div class="flex flex-col items-center justify-center h-[120px] text-gray-500">
+                <i class="fas fa-hdd text-gray-300 text-4xl mb-2"></i>
+                <span>No drives found</span>
+              </div>`;
           }
         })
         .catch(err => {
-          document.getElementById('folderContainer').innerHTML = 
-            `<div style="color:red;">Error loading drives: ${err}</div>`;
+          document.getElementById('folderContainer').innerHTML = `
+            <div class="text-red-500 p-4">Error loading drives: ${err}</div>`;
         });
     }
 
@@ -268,7 +286,7 @@
 
     function updateBreadcrumb(label) {
       const bc = document.getElementById('breadcrumb');
-      bc.innerHTML = `<span>${label}</span>`;
+      bc.innerHTML = `<span class="font-medium text-primary-dark hover:underline cursor-pointer">${label}</span>`;
     }
 
     function pathJoin(base, folder) {
@@ -290,6 +308,9 @@
       document.getElementById('startUploadBtn').style.display = 'none';
       document.getElementById('uploadProgress').style.display = 'none';
       document.getElementById('uploadStatus').innerHTML = '';
+      
+      // Scroll to upload card
+      document.getElementById('uploadCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
     // File selection + upload
@@ -298,9 +319,19 @@
       const input = document.getElementById('fileInput');
       selectedFile = input.files[0];
       if (!selectedFile) return;
+      
       document.getElementById('fileInfo').innerHTML = `
-        <div><strong>File:</strong> ${selectedFile.name} (${formatSize(selectedFile.size)})</div>`;
-      document.getElementById('startUploadBtn').style.display = 'inline-block';
+        <div class="bg-blue-50 border border-blue-100 rounded-lg p-3 flex items-start">
+          <div class="bg-blue-100 rounded-lg p-2 text-blue-700">
+            <i class="fas fa-file-alt text-xl"></i>
+          </div>
+          <div class="ml-3">
+            <div class="font-medium">${selectedFile.name}</div>
+            <div class="text-sm text-gray-500 mt-0.5">${formatSize(selectedFile.size)}</div>
+          </div>
+        </div>`;
+      
+      document.getElementById('startUploadBtn').style.display = 'flex';
     }
 
     function startUpload() {
@@ -308,6 +339,7 @@
         showToast('No file selected', 'error');
         return;
       }
+      
       const folder = currentPath;
       if (!folder) {
         showToast('No target folder', 'error');
@@ -326,9 +358,10 @@
     }
 
     function uploadSingleChunk(file, folder) {
-      showToast(`Uploading ${file.name} (single chunk)`, 'info');
+      showToast(`Uploading ${file.name}`, 'info');
       document.getElementById('uploadProgress').style.display = 'block';
       document.getElementById('uploadProgressBar').style.width = '0%';
+      document.getElementById('uploadPercent').textContent = '0%';
       document.getElementById('uploadStatus').textContent = 'Uploading...';
 
       const xhr = new XMLHttpRequest();
@@ -340,30 +373,43 @@
 
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
-          const pct = (e.loaded / e.total) * 100;
+          const pct = Math.floor((e.loaded / e.total) * 100);
           document.getElementById('uploadProgressBar').style.width = pct + '%';
+          document.getElementById('uploadPercent').textContent = pct + '%';
         }
       };
+      
       xhr.onload = () => {
         if (xhr.status === 200) {
           try {
             const resp = JSON.parse(xhr.responseText);
             if (resp.success) {
               document.getElementById('uploadProgressBar').style.width = '100%';
-              document.getElementById('uploadStatus').textContent = 'Upload complete';
+              document.getElementById('uploadPercent').textContent = '100%';
+              document.getElementById('uploadStatus').textContent = 'Upload complete!';
+              document.getElementById('uploadStatus').className = 'text-sm text-green-600 mt-2 font-medium';
               showToast('Upload complete!', 'success');
             } else {
               showToast(resp.error || 'Server error', 'error');
+              document.getElementById('uploadStatus').textContent = resp.error || 'Server error';
+              document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
             }
           } catch {
             showToast('Invalid response from server', 'error');
+            document.getElementById('uploadStatus').textContent = 'Invalid response from server';
+            document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
           }
         } else {
           showToast(`Error: ${xhr.status}`, 'error');
+          document.getElementById('uploadStatus').textContent = `Error: ${xhr.status}`;
+          document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
         }
       };
+      
       xhr.onerror = () => {
         showToast('Network error', 'error');
+        document.getElementById('uploadStatus').textContent = 'Network error';
+        document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
       };
 
       xhr.send(file);
@@ -377,9 +423,10 @@
 
     function uploadMultiChunk(file, folder) {
       // Setup UI
-      showToast(`Uploading ${file.name} (multi-chunk)`, 'info');
+      showToast(`Uploading ${file.name} in multiple chunks`, 'info');
       document.getElementById('uploadProgress').style.display = 'block';
       document.getElementById('uploadProgressBar').style.width = '0%';
+      document.getElementById('uploadPercent').textContent = '0%';
       document.getElementById('uploadStatus').textContent = 'Preparing...';
 
       // Setup state
@@ -398,6 +445,7 @@
         showToast('All chunks sent!', 'info');
         return;
       }
+      
       const start = currentChunkIndex * chunkSize;
       const end = Math.min(file.size, start + chunkSize);
       const blob = file.slice(start, end);
@@ -416,8 +464,9 @@
           const overallBytes = (currentChunkIndex * chunkSize) + e.loaded;
           const overallPercent = Math.floor((overallBytes / file.size) * 100);
           document.getElementById('uploadProgressBar').style.width = overallPercent + '%';
+          document.getElementById('uploadPercent').textContent = overallPercent + '%';
           document.getElementById('uploadStatus').textContent = 
-            `Chunk ${currentChunkIndex+1}/${totalChunks} - ${overallPercent}% overall`;
+            `Uploading chunk ${currentChunkIndex+1} of ${totalChunks} - ${overallPercent}% overall`;
         }
       };
 
@@ -426,14 +475,19 @@
           try {
             const resp = JSON.parse(xhr.responseText);
             if (!resp.success) {
-              showToast(resp.error || 'Server error chunk', 'error');
+              showToast(resp.error || 'Server error uploading chunk', 'error');
+              document.getElementById('uploadStatus').textContent = resp.error || 'Server error uploading chunk';
+              document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
               return;
             }
+            
             // success
             if (currentChunkIndex === totalChunks - 1) {
               // last chunk => server finalizes
               document.getElementById('uploadProgressBar').style.width = '100%';
-              document.getElementById('uploadStatus').textContent = 'Upload complete';
+              document.getElementById('uploadPercent').textContent = '100%';
+              document.getElementById('uploadStatus').textContent = 'Upload complete!';
+              document.getElementById('uploadStatus').className = 'text-sm text-green-600 mt-2 font-medium';
               showToast('Upload complete!', 'success');
             } else {
               currentChunkIndex++;
@@ -441,33 +495,45 @@
             }
           } catch {
             showToast('Invalid JSON response from server', 'error');
+            document.getElementById('uploadStatus').textContent = 'Invalid JSON response from server';
+            document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
           }
         } else {
           showToast(`Error uploading chunk ${currentChunkIndex}`, 'error');
+          document.getElementById('uploadStatus').textContent = `Error uploading chunk ${currentChunkIndex}`;
+          document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
         }
       };
+      
       xhr.onerror = () => {
-        showToast(`Network error chunk ${currentChunkIndex}`, 'error');
+        showToast(`Network error uploading chunk ${currentChunkIndex}`, 'error');
+        document.getElementById('uploadStatus').textContent = `Network error uploading chunk ${currentChunkIndex}`;
+        document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
       };
+      
       xhr.send(blob);
     }
 
     // Drag drop
     const dropZone = document.getElementById('dropZone');
+    
     dropZone.addEventListener('dragover', e => {
       e.preventDefault();
       e.stopPropagation();
-      dropZone.style.borderColor = '#4361ee';
+      dropZone.classList.add('border-primary', 'bg-blue-50/30');
     });
+    
     dropZone.addEventListener('dragleave', e => {
       e.preventDefault();
       e.stopPropagation();
-      dropZone.style.borderColor = '';
+      dropZone.classList.remove('border-primary', 'bg-blue-50/30');
     });
+    
     dropZone.addEventListener('drop', e => {
       e.preventDefault();
       e.stopPropagation();
-      dropZone.style.borderColor = '';
+      dropZone.classList.remove('border-primary', 'bg-blue-50/30');
+      
       if (e.dataTransfer.files.length) {
         document.getElementById('fileInput').files = e.dataTransfer.files;
         onFileSelected();
@@ -479,28 +545,80 @@
       const toast = document.getElementById('toast');
       const icon = toast.querySelector('i');
       const text = document.getElementById('toastMsg');
+      
       text.textContent = msg;
-      toast.className = ''; // reset
-      if (type==='success') icon.className = 'fas fa-check-circle';
-      else if (type==='error') icon.className = 'fas fa-times-circle';
-      else icon.className = 'fas fa-info-circle';
+      toast.className = 'fixed bottom-4 left-4 flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-white opacity-0 transform translate-y-8 transition-all duration-300 z-50 max-w-md'; // reset
+      
+      if (type === 'success') {
+        toast.classList.add('bg-green-500');
+        icon.className = 'fas fa-check-circle';
+      } else if (type === 'error') {
+        toast.classList.add('bg-red-500');
+        icon.className = 'fas fa-times-circle';
+      } else {
+        toast.classList.add('bg-primary');
+        icon.className = 'fas fa-info-circle';
+      }
 
-      toast.classList.add(type);
-      toast.classList.add('show');
+      toast.classList.add('opacity-100', 'translate-y-0');
+      
       setTimeout(() => {
-        toast.classList.remove('show');
+        toast.classList.remove('opacity-100', 'translate-y-0');
+        toast.classList.add('opacity-0', 'translate-y-8');
       }, duration);
     }
 
     function formatSize(bytes) {
-      if (bytes===0) return '0 B';
-      const sizes = ['B','KB','MB','GB','TB'];
-      const i = Math.floor(Math.log(bytes)/Math.log(1024));
+      if (bytes === 0) return '0 B';
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(1024));
       return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
     }
 
     function showHelp() {
-      alert('1) Navigate to folder.\n2) Select folder.\n3) Choose file.\n4) Click upload.\nLarge files use multi-chunk to avoid corruption.');
+      // Create a modern modal instead of using alert
+      const modal = document.createElement('div');
+      modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+      modal.innerHTML = `
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-5 transform transition-all">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-semibold text-gray-800">How to Use</h3>
+            <button class="text-gray-400 hover:text-gray-500" id="closeHelpModal">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div class="space-y-3 text-gray-600">
+            <div class="flex items-start gap-3">
+              <div class="bg-primary/10 text-primary rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 mt-0.5">1</div>
+              <p>Navigate to desired folder using the file explorer</p>
+            </div>
+            <div class="flex items-start gap-3">
+              <div class="bg-primary/10 text-primary rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 mt-0.5">2</div>
+              <p>Click "Select This Folder" to choose the upload destination</p>
+            </div>
+            <div class="flex items-start gap-3">
+              <div class="bg-primary/10 text-primary rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 mt-0.5">3</div>
+              <p>Click or drag & drop a file to the upload area</p>
+            </div>
+            <div class="flex items-start gap-3">
+              <div class="bg-primary/10 text-primary rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 mt-0.5">4</div>
+              <p>Click the Upload button to start uploading</p>
+            </div>
+          </div>
+          <div class="mt-5 pt-3 border-t border-gray-100 text-xs text-gray-500">
+            Large files are automatically split into chunks to prevent corruption during upload.
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(modal);
+      
+      document.getElementById('closeHelpModal').addEventListener('click', () => {
+        modal.classList.add('opacity-0');
+        setTimeout(() => {
+          document.body.removeChild(modal);
+        }, 300);
+      });
     }
   </script>
 </body>
