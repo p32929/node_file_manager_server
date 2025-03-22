@@ -382,7 +382,7 @@ const server = http.createServer((req, res) => {
             // Wait for write to complete before responding
             writeStream.on('finish', () => {
               console.log(`File upload complete: ${fileName} at ${finalFilePath}`);
-              console.log(`File size: ${fs.statSync(finalFilePath).size} bytes`);
+              console.log(`File size: ${fs.existsSync(finalFilePath) ? fs.statSync(finalFilePath).size : 'N/A'} bytes`);
               
               if (!res.headersSent) {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -395,10 +395,36 @@ const server = http.createServer((req, res) => {
             });
           });
           
-          // Handle errors on the request
+          // Handle errors on the request - Add improved error handling here
           req.on('error', (reqError) => {
             console.error(`Request error for ${fileName}:`, reqError);
-            writeStream.end();
+            
+            // Important: Don't immediately end the write stream on ECONNRESET
+            // Instead, check if there's data being processed
+            if (reqError.code === 'ECONNRESET') {
+              console.log(`Connection reset during upload of ${fileName} - attempting to save partial file`);
+              
+              // Give the write stream a moment to finish writing buffered data
+              setTimeout(() => {
+                writeStream.end();
+                
+                // Check if we got any data and report it
+                if (fs.existsSync(finalFilePath)) {
+                  const partialSize = fs.statSync(finalFilePath).size;
+                  console.log(`Saved partial file for ${fileName}: ${formatSize(partialSize)}`);
+                  
+                  // Optionally rename the file to indicate it's partial
+                  if (partialSize > 0) {
+                    const partialPath = `${finalFilePath}.partial`;
+                    fs.renameSync(finalFilePath, partialPath);
+                    console.log(`Renamed to ${partialPath}`);
+                  }
+                }
+              }, 1000); // Give it 1 second to flush buffers
+            } else {
+              // For other errors, end the write stream immediately
+              writeStream.end();
+            }
             
             if (!res.headersSent) {
               sendErrorResponse(
