@@ -703,6 +703,26 @@
       width: 20px;
       margin-right: 8px;
     }
+
+    /* Upload Progress Modal Styles */
+    #uploadProgressModal .modal-body {
+      padding: 20px;
+    }
+    
+    #uploadProgressModal .progress-container {
+      margin-bottom: 15px;
+    }
+    
+    #uploadProgressModal .modal-actions {
+      margin-top: 20px;
+      display: flex;
+      justify-content: center;
+    }
+    
+    #uploadProgressModal .modal-actions button {
+      min-width: 150px;
+      font-weight: 500;
+    }
   </style>
 </head>
 <body>
@@ -758,7 +778,6 @@
     <input type="hidden" name="targetPath" id="targetPath">
         <div class="button-group">
           <button type="button" id="uploadButton" onclick="uploadFile()"><i class="fas fa-cloud-upload-alt"></i> Upload File</button>
-          <button type="button" id="cancelButton" class="danger" onclick="cancelUpload()"><i class="fas fa-times-circle"></i> Cancel Upload</button>
         </div>
 
     <div class="progress-container">
@@ -837,6 +856,11 @@
           <div id="modalProgressBar" class="progress-bar"></div>
         </div>
         <div id="modalUploadInfo" class="upload-info-container"></div>
+        <div class="modal-actions">
+          <button type="button" id="modalCancelButton" class="danger" onclick="cancelUpload()">
+            <i class="fas fa-times-circle"></i> Cancel Upload
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -1521,11 +1545,6 @@
 
     function updateUploadButtonState(isDisabled) {
       document.getElementById('uploadButton').disabled = isDisabled;
-      if (isDisabled) {
-        document.getElementById('cancelButton').style.display = 'inline-block';
-      } else {
-        document.getElementById('cancelButton').style.display = 'none';
-      }
     }
     
     // Function to handle upload errors with retry logic
