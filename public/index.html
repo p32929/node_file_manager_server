@@ -670,6 +670,39 @@
       width: 16px;
       text-align: center;
     }
+
+    #uploadProgressModal .modal-body {
+      padding: 20px;
+    }
+    
+    #modalUploadInfo {
+      margin-top: 15px;
+    }
+    
+    #uploadProgressModal .progress-container {
+      margin: 15px 0;
+      height: 20px;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1) inset;
+    }
+    
+    #uploadProgressModal .progress-bar {
+      height: 100%;
+      background: linear-gradient(to right, var(--primary-light), var(--primary));
+      border-radius: 10px;
+      transition: width 0.3s ease;
+    }
+    
+    #uploadProgressModal .status-item {
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+    
+    #uploadProgressModal .status-item i {
+      width: 20px;
+      margin-right: 8px;
+    }
   </style>
 </head>
 <body>
@@ -1300,37 +1333,8 @@
     function uploadFile() {
       console.log('uploadFile function called');
       
-      // Check for undefined global variables
-      console.log('Variable check:', {
-        isUploadingDefined: typeof isUploading !== 'undefined',
-        uploadSpeeds: typeof uploadSpeeds !== 'undefined' ? `Array with ${uploadSpeeds?.length} items` : 'undefined',
-        speedSamples: typeof speedSamples !== 'undefined' ? `Array with ${speedSamples?.length} items` : 'undefined',
-        SPEED_WINDOW_SIZE: typeof SPEED_WINDOW_SIZE !== 'undefined' ? SPEED_WINDOW_SIZE : 'undefined',
-        connectionType: typeof connectionType !== 'undefined' ? connectionType : 'undefined',
-        systemMemory: typeof systemMemory !== 'undefined' ? systemMemory : 'undefined',
-        uploadPerformance: typeof uploadPerformance !== 'undefined' ? `Array length ${uploadPerformance?.length}` : 'undefined',
-      });
-      
-      // Set defaults for any missing values
-      if (typeof uploadPerformance === 'undefined') {
-        console.log('Creating uploadPerformance array');
-        window.uploadPerformance = [];
-      }
-      
-      if (typeof speedSamples === 'undefined') {
-        console.log('Creating speedSamples array');
-        window.speedSamples = [];
-      }
-      
-      if (typeof SPEED_WINDOW_SIZE === 'undefined') {
-        console.log('Setting SPEED_WINDOW_SIZE default');
-        window.SPEED_WINDOW_SIZE = 10;
-      }
-      
-      if (typeof adaptationFrequency === 'undefined') {
-        console.log('Setting adaptationFrequency default');
-        window.adaptationFrequency = 3;
-      }
+      // Check for undefined global variables and set defaults
+      // ... existing code ...
       
       // Now continue with the upload process
       const fileInput = document.getElementById('fileInput');
@@ -1363,384 +1367,29 @@
       // Show the upload progress modal
       document.getElementById('uploadProgressModal').classList.add('show');
       
-      // Adaptive initial chunk size
-      optimalChunkSize = determineInitialChunkSize(file.size);
-      
-      // Reset state
-      currentChunk = 0;
-      totalChunks = Math.ceil(file.size / optimalChunkSize);
-      chunkUploadAborted = false;
+      // Reset upload state
       isUploading = true;
-      isThrottled = document.hidden; // Start throttled if in background
-      lastProgressTime = Date.now(); // Initialize with current time
-      lastChunkBytes = 0;
-      retryCount = 0;
-      retryDelay = 1000;
-      uploadSpeeds = [];
       uploadStartTime = Date.now();
       overallStartTime = Date.now();
       uploadedBytes = 0;
-      uploadedFileId = null;
-      speedSamples = [];
-      lastSpeedAdjustmentTime = 0;
-      chunkSizeHistory = [];
-      adaptiveAdjustmentEnabled = true;
-      uploadChecksums = [];
       
-      // Record initial chunk size decision
-      chunkSizeHistory.push({
-        chunkIndex: 0,
-        size: optimalChunkSize,
-        reason: 'initial',
-        timestamp: Date.now()
-      });
+      // Hide the main page progress display and info container
+      document.querySelector('.progress-container').style.display = 'none';
+      document.getElementById('uploadInfo').style.display = 'none';
       
-      // Start heartbeat monitoring
-      startUploadHeartbeat();
-      
-      // Show upload in progress
+      // Upload the entire file as a single chunk
+      uploadSingleChunk(file);
       updateUploadButtonState(true);
-      
-      // Initialize progress display
-      document.querySelector('.progress-container').style.display = 'block';
-      document.querySelector('.progress-bar').style.width = '0%';
-      document.querySelector('.progress-bar').style.backgroundColor = '#4CAF50'; // Reset color
-      
-      // Set initial upload info in single-line format
-      document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-info-circle"></i> <span class="inline-status">Starting upload of ${formatSize(file.size)}...</span>`;
-      
-      console.log('Before starting upload, verifying variables:');
-      console.log('optimalChunkSize:', optimalChunkSize);
-      console.log('totalChunks:', totalChunks);
-      console.log('currentChunk:', currentChunk);
-      console.log('isUploading:', isUploading);
-      
-      // Start the upload immediately without delay
-      try {
-        uploadChunk(file);
-        console.log('uploadChunk called successfully');
-      } catch (error) {
-        console.error('Error calling uploadChunk:', error);
-        showToast('Failed to start upload: ' + error.message, 'error');
-      }
-    }
-
-    // Determine the best initial chunk size based on all available information
-    function determineInitialChunkSize(fileSize) {
-      console.log('determineInitialChunkSize called with fileSize:', fileSize);
-      
-      // Ensure formatSize function is available
-      if (typeof formatSize !== 'function') {
-        console.error('formatSize function is not defined!');
-        // Define inline if missing
-        window.formatSize = function(bytes) {
-          if (bytes === 0) return '0 B';
-          const k = 1024;
-          const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-          const i = Math.floor(Math.log(bytes) / Math.log(k));
-          return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-        };
-        console.log('formatSize function defined inline as fallback');
-      }
-      
-      // Start with connection type
-      let baseChunkSize;
-      
-      // If we have connection information, use it
-      if (connectionType) {
-        switch(connectionType) {
-          case '4g':
-          case 'wifi':
-            baseChunkSize = 8 * 1024 * 1024; // 8MB for fast connections
-            break;
-          case '3g':
-            baseChunkSize = 3 * 1024 * 1024; // 3MB for 3G
-            break;
-          case '2g':
-          case 'slow-2g':
-            baseChunkSize = 512 * 1024; // 512KB for slow connections
-            break;
-          default:
-            // Use file size based estimate if connection type is unknown
-            baseChunkSize = estimateChunkSizeFromFileSize(fileSize);
-        }
-      } else {
-        // Use file size based estimate if connection info not available
-        baseChunkSize = estimateChunkSizeFromFileSize(fileSize);
-      }
-      
-      // If we have speed samples from previous uploads or tests, use that data
-      if (speedSamples.length > 0) {
-        // Calculate average speed from samples
-        const avgSpeed = speedSamples.reduce((a, b) => a + b, 0) / speedSamples.length;
-        
-        // Target 4-second upload time per chunk for smooth progress updates
-        const targetTime = 4; // seconds
-        const speedBasedSize = avgSpeed * targetTime;
-        
-        // Blend the two estimates with a bias toward speed-based sizing
-        baseChunkSize = (baseChunkSize * 0.3) + (speedBasedSize * 0.7);
-      }
-      
-      // Adjust for file size - larger files can use larger chunks
-      // but very small files should use smaller chunks
-      if (fileSize < 1024 * 1024) { // Less than 1MB
-        baseChunkSize = Math.min(baseChunkSize, 256 * 1024); // Max 256KB
-      } else if (fileSize > 1024 * 1024 * 1024) { // Greater than 1GB
-        // For very large files, use larger chunks to reduce HTTP overhead
-        baseChunkSize = Math.max(baseChunkSize, 8 * 1024 * 1024); // Min 8MB
-      }
-      
-      // Apply system memory constraints if detected
-      if (systemMemory) {
-        // Limit chunk size based on device memory to prevent OOM
-        const memoryLimit = Math.min(16, Math.max(1, systemMemory)) * 1024 * 1024;
-        baseChunkSize = Math.min(baseChunkSize, memoryLimit);
-      }
-      
-      // Enforce reasonable limits
-      const minChunkSize = 256 * 1024; // 256KB minimum
-      const maxChunkSize = 20 * 1024 * 1024; // 20MB maximum
-      
-      const finalChunkSize = Math.max(minChunkSize, Math.min(maxChunkSize, baseChunkSize));
-      
-      console.log(`Adaptive chunk size for ${formatSize(fileSize)} file: ${formatSize(finalChunkSize)}`);
-      return finalChunkSize;
     }
     
-    // Estimate chunk size based on file size
-    function estimateChunkSizeFromFileSize(fileSize) {
-      if (fileSize < 1 * 1024 * 1024) { // Less than 1MB
-        return 256 * 1024; // 256KB
-      } else if (fileSize < 10 * 1024 * 1024) { // Less than 10MB
-        return 1 * 1024 * 1024; // 1MB
-      } else if (fileSize < 100 * 1024 * 1024) { // Less than 100MB
-        return 4 * 1024 * 1024; // 4MB
-      } else if (fileSize < 1024 * 1024 * 1024) { // Less than 1GB
-        return 8 * 1024 * 1024; // 8MB
-      } else { // Larger than 1GB
-        return 10 * 1024 * 1024; // 10MB
-      }
-    }
-    
-    // Track upload performance for a chunk
-    function trackChunkPerformance(chunkIndex, chunkSize, startTime, endTime, success) {
-      const transferTime = endTime - startTime;
-      const transferSpeed = success ? chunkSize / (transferTime / 1000) : 0;
-      
-      // Store performance data for this chunk
-      uploadPerformance[chunkIndex] = {
-        chunkIndex,
-        chunkSize,
-        startTime,
-        endTime,
-        transferTime,
-        transferSpeed,
-        success
-      };
-      
-      if (success) {
-        console.log(`Chunk ${chunkIndex} performance: ${formatSize(transferSpeed)}/s`);
-      }
-      
-      return {
-        duration: transferTime / 1000,
-        speed: transferSpeed,
-        success
-      };
-    }
-    
-    // Adaptively determine optimal chunk size based on real-time performance
-    function adaptChunkSize(file, currentPerformance) {
-      if (!adaptiveAdjustmentEnabled || uploadPerformance.length < 2) {
-        return optimalChunkSize;
-      }
-      
-      // Only adapt every few chunks or if there's a significant change
-      const shouldCheckForAdaptation = 
-        currentChunk % adaptationFrequency === 0 || 
-        Date.now() - lastSpeedAdjustmentTime > 10000;
-        
-      if (!shouldCheckForAdaptation) {
-        return optimalChunkSize;
-      }
-      
-      // Analyze recent performance
-      const recentPerf = uploadPerformance.slice(-3);
-      const olderPerf = uploadPerformance.slice(-6, -3);
-      
-      // If we don't have enough data, skip adaptation
-      if (recentPerf.length < 2 || olderPerf.length < 2) {
-        return optimalChunkSize;
-      }
-      
-      // Calculate average speeds
-      const recentAvgSpeed = recentPerf
-        .filter(p => p.success)
-        .reduce((sum, p) => sum + p.speed, 0) / recentPerf.length;
-        
-      const olderAvgSpeed = olderPerf
-        .filter(p => p.success)
-        .reduce((sum, p) => sum + p.speed, 0) / olderPerf.length;
-      
-      // Calculate upload durations
-      const recentAvgDuration = recentPerf
-        .filter(p => p.success)
-        .reduce((sum, p) => sum + p.duration, 0) / recentPerf.length;
-      
-      // Check network stability by comparing speeds
-      const speedRatio = recentAvgSpeed / olderAvgSpeed;
-      const isSpeedDecreasing = speedRatio < 0.8; // 20% or more decrease
-      const isSpeedIncreasing = speedRatio > 1.2; // 20% or more increase
-      
-      // Determine optimal upload time - aim for 2-6 seconds per chunk
-      const targetUploadTime = 4; // seconds
-      const optimalSize = recentAvgSpeed * targetUploadTime;
-      
-      // Set adaptation reason for logging
-      let adaptationReason = '';
-      
-      // Current chunk size
-      const currentSize = optimalChunkSize;
-      let newChunkSize = currentSize;
-      
-      // Adapt chunk size based on conditions
-      if (isSpeedDecreasing) {
-        // Speed is decreasing - reduce chunk size
-        newChunkSize = Math.max(256 * 1024, currentSize * 0.75);
-        adaptationReason = 'decreasing_speed';
-      } else if (isSpeedIncreasing && recentAvgDuration < 2) {
-        // Speed is increasing and chunks upload too quickly
-        // Increase chunk size for efficiency
-        newChunkSize = Math.min(20 * 1024 * 1024, currentSize * 1.5);
-        adaptationReason = 'increasing_speed';
-      } else if (recentAvgDuration > 8) {
-        // Uploads taking too long - reduce chunk size for better feedback
-        newChunkSize = Math.max(256 * 1024, currentSize * 0.6);
-        adaptationReason = 'duration_too_long';
-      } else if (Math.abs(optimalSize - currentSize) / currentSize > 0.3) {
-        // Current size is off by more than 30% from optimal
-        newChunkSize = optimalSize;
-        adaptationReason = 'optimizing';
-      } else {
-        // Current size is reasonable - no change needed
-        return currentSize;
-      }
-      
-      // If size would change by less than 20%, don't bother changing
-      if (Math.abs(newChunkSize - currentSize) / currentSize < 0.2) {
-        return currentSize;
-      }
-      
-      // Apply constraints
-      newChunkSize = Math.max(256 * 1024, Math.min(20 * 1024 * 1024, newChunkSize));
-      
-      // Round to nearest 256KB for cleaner sizes
-      newChunkSize = Math.round(newChunkSize / (256 * 1024)) * (256 * 1024);
-      
-      // If we made a change, update last adjustment time
-      if (newChunkSize !== currentSize) {
-        console.log(`Adaptive chunk size adjustment: ${formatSize(currentSize)} → ${formatSize(newChunkSize)} (${adaptationReason})`);
-        lastSpeedAdjustmentTime = Date.now();
-        
-        // Record the change
-        chunkSizeHistory.push({
-          chunkIndex: currentChunk + 1,
-          size: newChunkSize,
-          reason: adaptationReason,
-          timestamp: Date.now()
-        });
-        
-        // If we changed chunk size, recalculate total chunks
-        const remainingBytes = file.size - ((currentChunk + 1) * currentSize);
-        const additionalChunks = Math.ceil(remainingBytes / newChunkSize);
-        totalChunks = currentChunk + 1 + additionalChunks;
-      }
-      
-      return newChunkSize;
-    }
-
-    function updateUploadButtonState(isDisabled) {
-      document.getElementById('uploadButton').disabled = isDisabled;
-      if (isDisabled) {
-        document.getElementById('cancelButton').style.display = 'inline-block';
-      } else {
-        document.getElementById('cancelButton').style.display = 'none';
-      }
-    }
-    
-    function uploadChunk(file, fileId = null) {
-      console.log('uploadChunk called', { currentChunk, totalChunks, fileId });
-      
-      if (chunkUploadAborted) {
-        console.log('Upload aborted, stopping chunk upload');
-        isUploading = false;
-        updateProgress();
-        return;
-      }
-
-      if (currentChunk >= totalChunks) {
-        console.log('All chunks uploaded successfully');
-        showToast('Upload complete!', 'success');
-        isUploading = false;
-        updateProgress();
-        const urlParams = new URLSearchParams(window.location.search);
-        loadFileList(urlParams.get('path') || '');
-        return;
-      }
-      
-      // Update heartbeat timestamp
-      lastProgressTime = Date.now();
-      
-      // Define sendNextChunk function to handle progression through the upload
-      function sendNextChunk() {
-        // Increment the chunk counter for the next chunk
-        currentChunk++;
-        console.log('Moving to next chunk:', currentChunk);
-        
-        // Adapt chunk size for next chunk if enabled
-        if (adaptiveAdjustmentEnabled && currentChunk < totalChunks) {
-          optimalChunkSize = adaptChunkSize(file, uploadPerformance[uploadPerformance.length - 1]);
-        }
-        
-        // Call uploadChunk again with the same file and fileId
-        uploadChunk(file, uploadedFileId || fileId);
-      }
-
-      // Prepare chunk
-      const start = currentChunk === 0 ? 0 : 
-        uploadPerformance.reduce((sum, p, index) => 
-          index < currentChunk ? sum + p.chunkSize : sum, 0);
-      
-      const end = Math.min(file.size, start + optimalChunkSize);
-      const chunk = file.slice(start, end);
-      const chunkSize = end - start;
-      
-      console.log(`Preparing chunk ${currentChunk + 1}/${totalChunks}`, { 
-        start, 
-        end, 
-        chunkSize,
-        fileSize: file.size
-      });
-
-      // Update progress immediately to show we're starting this chunk
-      document.getElementById('uploadInfo').innerHTML = 
-        `<div class="upload-status">
-          <div class="status-item">
-            <i class="fas fa-upload"></i> Uploading chunk ${currentChunk + 1}/${totalChunks}
-          </div>
-        </div>`;
-      
-      // Ensure the full progress gets updated right away
-      updateProgress();
-
-      // Record the start time for this chunk
-      const chunkStartTime = Date.now();
-
+    // Upload entire file as a single chunk
+    function uploadSingleChunk(file) {
       try {
         // Prepare upload
         const xhr = new XMLHttpRequest();
+        
+        // Store reference for potential cancellation
+        window.currentXhr = xhr;
         
         // Get the target path from the hidden input
         const targetPath = document.getElementById('targetPath').value;
@@ -1752,324 +1401,139 @@
         
         xhr.open('POST', uploadUrl, true);
         
-        // Set headers for chunked upload
+        // Set headers for upload
         xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
-        xhr.setRequestHeader('X-Chunk-Index', currentChunk);
-        xhr.setRequestHeader('X-Total-Chunks', totalChunks);
+        xhr.setRequestHeader('X-Chunk-Index', 0);
+        xhr.setRequestHeader('X-Total-Chunks', 1);
         xhr.setRequestHeader('Content-Type', 'application/octet-stream'); // Ensure binary data is sent correctly
         
-        // Include adaptive information for server optimization
-        const avgSpeed = speedSamples.length ? 
-          Math.round(speedSamples.slice(-3).reduce((a,b) => a+b, 0) / 
-          Math.min(3, speedSamples.length)) : 0;
-          
-        xhr.setRequestHeader('X-Client-Speed', avgSpeed);
-        xhr.setRequestHeader('X-Chunk-Size', chunkSize);
+        // Update progress display
+        document.getElementById('modalUploadInfo').innerHTML = `
+          <div class="upload-status">
+            <div class="status-item">
+              <i class="fas fa-upload"></i> Uploading ${file.name}
+            </div>
+          </div>
+        `;
         
-        console.log('XHR headers set:', {
-          'X-File-Name': encodeURIComponent(file.name),
-          'X-Chunk-Index': currentChunk,
-          'X-Total-Chunks': totalChunks,
-          'X-Client-Speed': avgSpeed,
-          'X-Chunk-Size': chunkSize,
-          'Content-Type': 'application/octet-stream'
-        });
-        
-        // If it's not the first chunk, use the fileId
-        if (fileId) {
-          xhr.setRequestHeader('X-File-Id', fileId);
-          console.log('Setting X-File-Id header:', fileId);
-        }
-
-        // Store the current chunk we're working on for potential resume
-        const chunkIndex = currentChunk;
-        
-        // Set a longer timeout for large chunks
-        xhr.timeout = 60000; // 60 seconds timeout
-        
-        // Handle progress events
+        // Set up progress tracking
         xhr.upload.onprogress = function(e) {
           if (e.lengthComputable) {
-            // Basic progress logging (only every few %)
-            const percent = Math.round((e.loaded / e.total) * 100);
-            if (percent % 10 === 0) {
-              console.log(`Chunk ${chunkIndex} upload progress: ${percent}%`);
-            }
-            
-            // Update heartbeat timestamp on progress
-            lastProgressTime = Date.now();
-            
-            // Calculate progress of this chunk
-            const chunkProgress = e.loaded / e.total;
-            
-            // Calculate total uploaded bytes (completed chunks + current progress)
-            const completedChunksBytes = currentChunk * optimalChunkSize;
-            const currentChunkBytes = chunkSize * chunkProgress;
-            uploadedBytes = completedChunksBytes + currentChunkBytes;
-            
-            // Capture instantaneous upload speed
+            uploadedBytes = e.loaded;
             const now = Date.now();
-            if (now - lastUIUpdate >= 200) { // Update UI more frequently (every 200ms instead of 500ms)
-              const timeDiff = (now - uploadStartTime) / 1000; // in seconds
-              const bytesChanged = uploadedBytes - lastChunkBytes;
+            const percent = Math.min(100, Math.round((uploadedBytes / file.size) * 100));
+            
+            // Update progress bar
+            document.getElementById('modalProgressBar').style.width = percent + '%';
+            
+            // Calculate speed
+            const timeElapsed = (now - uploadStartTime) / 1000; // seconds
+            const uploadSpeed = uploadedBytes / timeElapsed; // bytes per second
+            const speedText = formatSize(uploadSpeed) + '/s';
+            
+            // Calculate ETA
+            const remainingBytes = file.size - uploadedBytes;
+            const eta = remainingBytes / uploadSpeed;
+            const etaText = formatTime(eta);
+            
+            // Update status display
+            document.getElementById('modalUploadInfo').innerHTML = `
+              <div class="upload-status">
+                <div class="status-item">
+                  <i class="fas fa-upload"></i> Progress: <strong>${percent}%</strong> (${formatSize(uploadedBytes)} of ${formatSize(file.size)})
+                </div>
+                <div class="status-item">
+                  <i class="fas fa-tachometer-alt"></i> Speed: <strong>${speedText}</strong>
+                </div>
+                <div class="status-item">
+                  <i class="fas fa-clock"></i> Time remaining: <strong>${etaText}</strong>
+                </div>
+              </div>
+            `;
+          }
+        };
+        
+        // Handle upload completion
+        xhr.onload = function() {
+          if (xhr.status === 200) {
+            try {
+              const response = JSON.parse(xhr.responseText);
               
-              if (bytesChanged > 0 && timeDiff > 0) {
-                // Get instantaneous speed (bytes per second)
-                const speed = bytesChanged / timeDiff;
-                
-                // Only include realistic values (discard connection blips)
-                if (speed > 1024 && speed < 1000 * 1024 * 1024) { // Between 1KB/s and 1GB/s
-                  uploadSpeeds.push(speed);
-                  // Keep only the most recent samples for moving average
-                  if (uploadSpeeds.length > SPEED_WINDOW_SIZE) {
-                    uploadSpeeds.shift();
-                  }
-                  
-                  // Add to speed samples for adaptive decision making
-                  speedSamples.push(speed);
-                  if (speedSamples.length > 20) { // Keep last 20 samples for trend analysis
-                    speedSamples.shift();
-                  }
-                }
+              if (!response.success) {
+                handleUploadError(xhr, file, null, response.error?.message || 'Server error', response.error);
+                return;
               }
               
-              // Update progress
-              updateProgress();
+              // Upload successful
+              console.log(`Upload of ${file.name} completed!`);
+              isUploading = false;
               
-              // Reset for next speed calculation
-              lastChunkBytes = uploadedBytes;
-              uploadStartTime = now;
-              lastUIUpdate = now;
+              // Hide the upload progress modal
+              document.getElementById('uploadProgressModal').classList.remove('show');
+              
+              // Show success message
+              showToast(`Upload of ${file.name} completed successfully!`, 'success');
+              
+              // Reset UI
+              updateUploadButtonState(false);
+              
+              // Refresh file list
+              const urlParams = new URLSearchParams(window.location.search);
+              loadFileList(urlParams.get('path') || '');
+            } catch (error) {
+              handleUploadError(xhr, file, null, 'Failed to parse server response', { error });
             }
+          } else {
+            handleUploadError(xhr, file, null, `Server error: ${xhr.status}`, { status: xhr.status });
           }
         };
         
         // Handle errors
-        xhr.onerror = function(e) {
-          console.error(`Error uploading chunk ${chunkIndex}:`, e);
-          lastProgressTime = Date.now(); // Update heartbeat
-          
-          // Track failed performance
-          trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, Date.now(), false);
-          
-          handleUploadError(xhr, file, fileId, 'Network error occurred', {
-            type: 'network_error',
-            details: e.message || 'Unknown network error',
-            timestamp: new Date().toISOString(),
-            chunkIndex: chunkIndex
-          });
+        xhr.onerror = function() {
+          handleUploadError(xhr, file, null, 'Network error occurred', { type: 'network' });
         };
         
-        // Handle timeout
-        xhr.ontimeout = function(e) {
-          console.error(`Timeout uploading chunk ${chunkIndex}:`, e);
-          lastProgressTime = Date.now(); // Update heartbeat
-          
-          // Track failed performance
-          trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, Date.now(), false);
-          
-          handleUploadError(xhr, file, fileId, 'Request timed out', {
-            type: 'timeout',
-            details: 'Connection timed out after 60 seconds',
-            timestamp: new Date().toISOString(),
-            chunkIndex: chunkIndex
-          });
+        xhr.ontimeout = function() {
+          handleUploadError(xhr, file, null, 'Request timed out', { type: 'timeout' });
         };
         
-        xhr.onabort = function(e) {
-          console.warn(`Upload aborted for chunk ${chunkIndex}`);
-          lastProgressTime = Date.now(); // Update heartbeat
-          
-          if (!chunkUploadAborted) {
-            // This was not an intentional abort, handle as error
-            handleUploadError(xhr, file, fileId, 'Upload was aborted', {
-              type: 'abort',
-              details: 'Connection was aborted unexpectedly',
-              timestamp: new Date().toISOString(),
-              chunkIndex: chunkIndex
-            });
-          }
+        xhr.onabort = function() {
+          handleUploadError(xhr, file, null, 'Upload was aborted', { type: 'abort' });
         };
         
-        xhr.onload = function() {
-          // Record end time for performance tracking
-          const chunkEndTime = Date.now();
-          
-          // Update heartbeat timestamp
-          lastProgressTime = Date.now();
-          
-          if (xhr.status === 200) {
-            try {
-              const response = JSON.parse(xhr.responseText);
-              console.log(`Received response for chunk ${chunkIndex}:`, response);
-              
-              if (!response.success) {
-                // Server returned an error with 200 status code but success=false
-                const errorDetails = {
-                  code: response.error?.code || 'SERVER_ERROR',
-                  details: response.error?.message || response.error || 'Unknown server error',
-                  timestamp: new Date().toISOString(),
-                  chunkIndex: chunkIndex
-                };
-                console.error('Server returned error:', errorDetails);
-                
-                // Track failed performance
-                trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, chunkEndTime, false);
-                
-                handleUploadError(xhr, file, fileId, response.error?.message || 'Server error', errorDetails);
-                return;
-              }
-              
-              // Store the fileId from the first chunk response
-              if (chunkIndex === 0) {
-                uploadedFileId = response.fileId;
-                console.log(`Got fileId from server: ${uploadedFileId}`);
-              }
-              
-              // Track performance of this chunk
-              trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, chunkEndTime, true);
-              
-              // Calculate and store MD5 hash of this chunk for verification if needed
-              calculateMD5(chunk).then(hash => {
-                uploadChecksums[chunkIndex] = hash;
-                console.log(`Chunk ${chunkIndex} MD5: ${hash}`);
-              }).catch(err => {
-                console.warn(`Could not calculate MD5 for chunk ${chunkIndex}:`, err);
-              });
-              
-              // If this is the last chunk or we got a filePath in the response
-              if (response.filePath || currentChunk === totalChunks - 1) {
-                console.log(`Upload of ${file.name} completed!`);
-                
-                // Clean up heartbeat
-                if (uploadHeartbeatInterval) {
-                  clearInterval(uploadHeartbeatInterval);
-                  uploadHeartbeatInterval = null;
-                }
-                
-                // End upload process
-                isUploading = false;
-                showToast(`Upload of ${file.name} completed successfully!`, 'success');
-                
-                // Hide the upload progress modal
-                document.getElementById('uploadProgressModal').classList.remove('show');
-                
-                // Update info with completion message in single-line format
-                document.getElementById('uploadInfo').innerHTML = 
-                  `<i class="fas fa-check-circle"></i> <span class="inline-status">Upload complete</span><span class="status-divider">|</span><span class="inline-status">${formatSize(file.size)} uploaded</span>`;
-                
-                // Reset UI
-                updateUploadButtonState(false);
-                
-                // Refresh file list
-                const urlParams = new URLSearchParams(window.location.search);
-                loadFileList(urlParams.get('path') || '');
-                
-                return;
-              }
-              
-              // Continue with next chunk
-              sendNextChunk();
-            } catch (error) {
-              console.error('Error parsing response:', error);
-              
-              // Track failed performance
-              trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, chunkEndTime, false);
-              
-              handleUploadError(xhr, file, fileId, 'Failed to parse server response', {
-                error: error,
-                chunkIndex: chunkIndex
-              });
-            }
-          } else {
-            // Server error
-            console.error(`Server returned status ${xhr.status} for chunk ${chunkIndex}`);
-            
-            // Track failed performance
-            trackChunkPerformance(chunkIndex, chunkSize, chunkStartTime, chunkEndTime, false);
-            
-            // Try to parse response to get error details
-            let errorDetails = {
-              status: xhr.status,
-              chunkIndex: chunkIndex,
-              timestamp: new Date().toISOString()
-            };
-            
-            try {
-              const response = JSON.parse(xhr.responseText);
-              errorDetails.message = response.error || 'Server error';
-              errorDetails.code = response.code;
-              errorDetails.details = response.details;
-            } catch (e) {
-              errorDetails.message = xhr.statusText || 'Server error';
-              errorDetails.responseText = xhr.responseText;
-            }
-            
-            handleUploadError(xhr, file, fileId, `Server error: ${xhr.status}`, errorDetails);
-          }
-        };
+        // Send the file directly
+        console.log('Sending file as single chunk:', file.size, 'bytes');
+        xhr.send(file);
         
-        console.log('Sending XHR request with raw binary data');
-        xhr.send(chunk);
-        console.log('XHR request sent');
       } catch (error) {
-        console.error('Error setting up chunk upload:', error);
-        handleUploadError(null, file, fileId, 'Failed to prepare upload', {
-          type: 'setup_error',
-          details: error.message || 'Unknown error during upload setup',
-          timestamp: new Date().toISOString(),
-          chunkIndex: currentChunk
-        });
+        handleUploadError(null, file, null, 'Failed to prepare upload', { error });
+      }
+    }
+
+    function updateUploadButtonState(isDisabled) {
+      document.getElementById('uploadButton').disabled = isDisabled;
+      if (isDisabled) {
+        document.getElementById('cancelButton').style.display = 'inline-block';
+      } else {
+        document.getElementById('cancelButton').style.display = 'none';
       }
     }
     
     // Function to handle upload errors with retry logic
     function handleUploadError(xhr, file, fileId, errorMessage, errorDetails) {
-      console.error(`Upload error for chunk ${currentChunk}:`, errorDetails);
+      console.error('Upload error:', errorMessage, errorDetails);
       
-      // Report error to server
-      reportErrorToServer({
-        code: errorDetails.code || 'UPLOAD_ERROR',
-        message: errorMessage,
-        details: errorDetails
-      });
+      // End upload process
+      isUploading = false;
       
-      // Check if we should retry
-      if (retryCount < MAX_RETRY_COUNT) {
-        retryCount++;
-        
-        // Show retry message
-        document.getElementById('uploadInfo').innerHTML = 
-          `<i class="fas fa-sync-alt"></i> <span class="inline-status">Retrying chunk ${currentChunk + 1}/${totalChunks}</span><span class="status-divider">|</span><span class="inline-status">Attempt ${retryCount}/${MAX_RETRY_COUNT}</span>`;
-        
-        // Exponential backoff
-        const delay = Math.min(retryDelay * Math.pow(2, retryCount - 1), MAX_RETRY_DELAY);
-        
-        console.log(`Retrying in ${delay}ms (attempt ${retryCount}/${MAX_RETRY_COUNT})`);
-        
-        // Try again after delay
-        setTimeout(() => {
-          // Retry same chunk
-          uploadChunk(file, uploadedFileId || fileId);
-        }, delay);
-      } else {
-        // Out of retries, show error
-        isUploading = false;
-        document.getElementById('uploadInfo').innerHTML = 
-          `<i class="fas fa-exclamation-circle"></i> <span class="inline-status">Upload failed after ${MAX_RETRY_COUNT} attempts</span>`;
-        
-        // Show more detailed error
-        showToast(errorMessage, 'error', errorDetails.details);
-        
-        // Keep progress bar visible but show error
-        const progressBar = document.querySelector('.progress-bar');
-        if (progressBar) {
-          progressBar.style.backgroundColor = '#f44336';
-        }
-        
-        // Stop upload
-        updateUploadButtonState(false);
-      }
+      // Hide the upload progress modal
+      document.getElementById('uploadProgressModal').classList.remove('show');
+      
+      // Show error message to user
+      showToast(errorMessage, 'error', errorDetails?.details);
+      
+      // Reset UI
+      updateUploadButtonState(false);
     }
     
     // Update progress UI with current status
@@ -2302,10 +1766,19 @@
 
     function cancelUpload() {
       if (isUploading) {
-        chunkUploadAborted = true;
+        // If any XHR is in progress, abort it
+        if (window.currentXhr) {
+          window.currentXhr.abort();
+          window.currentXhr = null;
+        }
+        
         showToast('Upload cancelled.', 'info');
         isUploading = false;
-        updateProgress();
+        
+        // Hide the upload modal
+        document.getElementById('uploadProgressModal').classList.remove('show');
+        
+        updateUploadButtonState(false);
       }
     }
 
