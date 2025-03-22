@@ -1,2019 +1,506 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
   <title>Simple File Upload Server</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
   <style>
-    /* General Styling */
+    /* Basic styling for demo */
     :root {
       --primary: #4361ee;
       --primary-light: #4895ef;
       --primary-dark: #3f37c9;
-      --success: #4cc9f0;
-      --warning: #f72585;
-      --gray-light: #f8f9fa;
       --gray: #e9ecef;
       --gray-dark: #6c757d;
+      --gray-light: #f8f9fa;
       --text: #212529;
+      --warning: #f72585;
     }
-    
     body {
-      font-family: 'Segoe UI', Roboto, -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: 'Segoe UI', sans-serif;
       background: var(--gray-light);
-      margin: 0;
-      padding: 0;
+      margin: 0; padding: 0;
       color: var(--text);
-      line-height: 1.6;
     }
-
-    .container {
-      max-width: 1000px;
-      margin: 0 auto;
-      padding: 20px;
-    }
-
     header {
       background: linear-gradient(135deg, var(--primary), var(--primary-light));
-      color: white;
+      color: #fff;
       padding: 20px;
       text-align: center;
-      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-      border-radius: 0 0 15px 15px;
       margin-bottom: 30px;
+      border-radius: 0 0 15px 15px;
     }
-
-    h1, h2, h3 {
-      margin: 0;
-      font-weight: 600;
-    }
-
-    header h1 {
-      font-size: 28px;
-      margin-bottom: 5px;
-    }
-
-    header p {
-      margin: 0;
-      opacity: 0.9;
-      font-size: 16px;
-    }
-
+    header h1 { margin: 0; font-size: 26px; }
+    header p { margin: 5px 0 0; }
+    .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
     .card {
-      background: white;
+      background: #fff;
       border-radius: 12px;
-      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+      box-shadow: 0 4px 15px rgba(0,0,0,0.08);
       margin-bottom: 20px;
-      overflow: hidden;
-      position: relative;
     }
-
     .card-header {
       background: var(--gray);
-      padding: 15px 20px;
-      border-bottom: 1px solid rgba(0,0,0,0.05);
+      padding: 15px;
+      font-size: 18px;
       display: flex;
-      align-items: center;
       justify-content: space-between;
-    }
-
-    .card-header h2 {
-      margin: 0;
-      font-size: 18px;
-      display: flex;
       align-items: center;
-      gap: 12px;
     }
-
-    .card-body {
-      padding: 20px;
-    }
-
-    /* Explorer Styling */
-    #explorer .breadcrumb {
-      display: flex;
-      padding: 10px 0;
-      margin-bottom: 15px;
-      list-style: none;
-      background-color: rgba(0,0,0,0.02);
-      border-radius: 5px;
-      overflow-x: auto;
-      white-space: nowrap;
-      padding: 10px;
-    }
-
-    #explorer .breadcrumb-item {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 4px 0;
-    }
-
-    #explorer .breadcrumb-item + .breadcrumb-item::before {
-      content: "/";
-      padding: 0 8px;
-      color: var(--gray-dark);
-    }
-
-    #explorer .breadcrumb-item a {
-      color: var(--primary);
-      text-decoration: none;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-    }
-
-    #explorer .breadcrumb-item a:hover {
-      text-decoration: underline;
-    }
-
-    #explorer .breadcrumb-item.active {
-      color: var(--gray-dark);
-    }
-
-    .folder-list {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: 10px;
-      margin-top: 15px;
-    }
-
-    .folder {
-      padding: 12px 16px;
-      cursor: pointer;
-      border-radius: 8px;
-      transition: all 0.2s;
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      font-size: 15px;
-      border: 1px solid var(--gray);
-      background: rgba(255,255,255,0.5);
-    }
-
-    .folder:hover {
-      background: var(--gray);
-      transform: translateY(-2px);
-      box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-    }
-
-    .folder i {
-      color: var(--primary);
-      font-size: 18px;
-    }
-
-    .buttons {
-      margin-top: 20px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      justify-content: center;
-    }
-
+    .card-body { padding: 20px; }
     button {
-      padding: 12px 18px;
+      padding: 10px 15px;
+      border: none;
+      border-radius: 6px;
+      background: var(--primary);
+      color: #fff;
       font-size: 14px;
       cursor: pointer;
-      border: none;
-      background: var(--primary);
-      color: white;
-      border-radius: 8px;
-      transition: all 0.3s;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      font-weight: 500;
+      transition: background 0.3s;
+      margin-right: 5px;
     }
-
     button:hover {
       background: var(--primary-dark);
-      transform: translateY(-2px);
-      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
     }
-
-    button:active {
-      transform: translateY(0);
-    }
-
-    button:disabled {
-      background: var(--gray);
-      color: var(--gray-dark);
-      cursor: not-allowed;
-      transform: none;
-      box-shadow: none;
-    }
-
-    button:disabled:hover {
-      background: var(--gray);
-      transform: none;
-      box-shadow: none;
-    }
-
     button.secondary {
-      background: var(--gray);
-      color: var(--text);
-    }
-
-    button.secondary:hover {
       background: var(--gray-dark);
-      color: white;
     }
-
-    button.danger {
-      background: var(--warning);
-    }
-
-    button.danger:hover {
-      background: #d31367; /* Darker shade of warning */
-    }
-
-    .button-group {
+    .breadcrumb {
       display: flex;
-      gap: 10px;
-      margin-top: 15px;
-    }
-
-    #cancelButton {
-      display: none;
-    }
-
-    /* Upload Form */
-    #uploadForm {
-      margin-top: 20px;
-    }
-
-    .file-input-container {
-      position: relative;
-      margin-bottom: 20px;
-    }
-
-    .file-input-container input[type="file"] {
-      position: absolute;
-      left: 0;
-      top: 0;
-      opacity: 0;
-      width: 100%;
-      height: 100%;
-      cursor: pointer;
-    }
-
-    .file-input-button {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      padding: 30px;
-      border: 2px dashed var(--gray-dark);
-      border-radius: 8px;
-      background: var(--gray-light);
-      text-align: center;
-      color: var(--gray-dark);
-      transition: all 0.3s;
-    }
-
-    .file-input-container:hover .file-input-button {
-      border-color: var(--primary);
-      color: var(--primary);
-      background: rgba(67, 97, 238, 0.05);
-    }
-
-    .file-info {
-      margin-top: 12px;
-      display: none;
-      background: var(--gray-light);
-      padding: 12px 16px;
-      border-radius: 8px;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    /* Progress Bar */
-    .progress-container {
-      margin: 10px 0;
-      width: 100%;
-      background-color: #f5f5f5;
-      border-radius: 4px;
-      overflow: hidden;
-      height: 20px;
-    }
-    
-    .progress-bar {
-      height: 100%;
-      width: 0;
-      background-color: #4CAF50;
-      transition: width 0.3s ease;
-    }
-    
-    .upload-info-container {
-      min-height: 24px;
-      margin: 5px 0;
-      white-space: normal;
-      overflow: visible;
-      font-size: 14px;
-      line-height: 1.5;
-    }
-    
-    /* Add this to your existing CSS styles */
-    .inline-status {
-      display: inline-block;
-      margin-right: 8px;
-      white-space: nowrap;
-    }
-    
-    .status-divider {
-      display: inline-block;
-      margin: 0 5px;
-      color: #999;
-    }
-    
-    /* Upload Info */
-    .upload-info {
-      margin-top: 12px;
-      font-size: 14px;
-      color: var(--gray-dark);
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    /* Modal for How-To Guide */
-    .modal {
-      display: none;
-      position: fixed;
-      z-index: 9999;
-      left: 0;
-      top: 0;
-      width: 100%;
-      height: 100%;
-      background-color: rgba(0,0,0,0.4);
-      animation: fadeIn 0.3s;
-      overflow: hidden;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-    
-    /* Hide modal by default */
-    .modal {
-      display: none;
-    }
-    
-    /* Show modal when needed */
-    .modal.show {
-      display: flex;
-    }
-
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-
-    .modal-content {
-      background-color: white;
-      padding: 0;
-      width: 90%;
-      max-width: 700px;
-      max-height: 75vh;
-      border-radius: 12px;
-      box-shadow: 0 5px 20px rgba(0,0,0,0.2);
-      animation: slideIn 0.3s;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      position: relative;
-      margin: 0;
-    }
-
-    @keyframes slideIn {
-      from { transform: translateY(-30px); opacity: 0; }
-      to { transform: translateY(0); opacity: 1; }
-    }
-
-    .modal-header {
-      padding: 15px 20px;
-      background: var(--primary);
-      color: white;
-      border-radius: 12px 12px 0 0;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-shrink: 0;
-    }
-
-    .modal-header h2 {
-      margin: 0;
-      font-size: 20px;
-    }
-
-    .modal-body {
-      padding: 20px;
-      overflow-y: auto;
-      flex-grow: 1;
-    }
-
-    .close {
-      color: white;
-      font-size: 28px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-
-    .close:hover {
-      opacity: 0.7;
-    }
-
-    .guide-section {
-      margin-bottom: 25px;
-    }
-
-    .guide-section h3 {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      font-size: 18px;
-      margin-bottom: 12px;
-      color: var(--primary-dark);
-    }
-
-    .guide-section p {
-      margin: 0 0 10px 0;
-      line-height: 1.6;
-    }
-
-    .guide-steps {
-      padding-left: 30px;
-    }
-
-    .guide-steps li {
-      margin-bottom: 8px;
-    }
-
-    /* Empty state */
-    .empty-state {
-      text-align: center;
-      padding: 30px 20px;
-      color: var(--gray-dark);
-    }
-
-    .empty-state i {
-      font-size: 40px;
-      margin-bottom: 10px;
-      opacity: 0.5;
-    }
-
-    /* Help button */
-    .help-button {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      width: 50px;
-      height: 50px;
-      border-radius: 50%;
-      background: var(--primary);
-      color: white;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 24px;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-      cursor: pointer;
-      transition: all 0.3s;
-    }
-
-    .help-button:hover {
-      transform: scale(1.1);
-    }
-
-    /* Toast notification */
-    #toast {
-      position: fixed;
-      bottom: 20px;
-      left: 20px;
-      background: #333;
-      color: white;
-      padding: 14px 20px;
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-      transform: translateY(100px);
-      opacity: 0;
-      transition: all 0.3s;
-      z-index: 1000;
-      max-width: 90%;
-    }
-
-    #toast.show {
-      transform: translateY(0);
-      opacity: 1;
-    }
-
-    #toast.success {
-      background: #28a745;
-    }
-
-    #toast.error {
-      background: #dc3545;
-    }
-    
-    #toast.info {
-      background: var(--primary);
-    }
-    
-    #toastMessage {
-      word-break: break-word;
-      flex-grow: 1;
-    }
-
-    /* Enhanced toast for detailed errors */
-    #errorDetails {
-      display: none;
-      padding: 10px;
-      margin-top: 10px;
-      background: rgba(0,0,0,0.2);
-      border-radius: 4px;
-      font-family: monospace;
-      white-space: pre-wrap;
-      max-height: 100px;
-      overflow-y: auto;
-      font-size: 12px;
-    }
-    
-    #toast.error #errorDetails.has-details {
-      display: block;
-    }
-    
-    #toast .toast-actions {
-      display: flex;
-      gap: 10px;
-      margin-top: 10px;
-    }
-    
-    #toast .toast-actions button {
-      padding: 5px 10px;
-      font-size: 12px;
-      background: rgba(255,255,255,0.2);
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    }
-    
-    #toast .toast-actions button:hover {
-      background: rgba(255,255,255,0.3);
-    }
-    
-    #toast.error.detailed {
-      width: 500px;
-      max-width: 90%;
-    }
-
-    /* Responsive design */
-    @media (max-width: 768px) {
-      .folder-list {
-        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-      }
-
-      .modal-content {
-        width: 95%;
-        max-height: 80vh;
-      }
-      
-      .modal-body {
-        padding: 15px;
-      }
-      
-      .guide-section h3 {
-        font-size: 16px;
-      }
-      
-      .guide-steps {
-        padding-left: 20px;
-      }
-
-      .buttons {
-        flex-direction: column;
-        width: 100%;
-      }
-
-      button {
-        width: 100%;
-      }
-      
-      .button-group {
-        flex-direction: column;
-      }
-      
-      #toast {
-        left: 50%;
-        transform: translateY(100px) translateX(-50%);
-        width: 90%;
-      }
-      
-      #toast.show {
-        transform: translateY(0) translateX(-50%);
-      }
-    }
-
-    .file-path {
-      word-break: break-all;
-      display: inline-block;
-      font-family: monospace;
-      background: rgba(0,0,0,0.05);
-      padding: 2px 5px;
-      border-radius: 3px;
-      margin-top: 5px;
-    }
-    
-    .toast {
-      max-width: 80%;
-      word-break: break-word;
-    }
-    
-    .toast.success {
-      max-width: 100%;
-    }
-
-    /* Add upload status styling */
-    .upload-status {
-      background-color: #f8f9fa;
-      border-radius: 8px;
-      padding: 12px 15px;
-      margin-top: 10px;
-      border: 1px solid #e9ecef;
-    }
-    
-    .status-item {
-      margin-bottom: 6px;
-      display: flex;
-      align-items: center;
       gap: 8px;
-    }
-    
-    .status-item:last-child {
-      margin-bottom: 0;
-    }
-    
-    .status-item strong {
-      color: var(--primary);
-      font-weight: 600;
-    }
-    
-    .status-item i {
-      color: var(--primary-dark);
-      width: 16px;
-      text-align: center;
-    }
-
-    #uploadProgressModal .modal-body {
-      padding: 20px;
-    }
-    
-    #modalUploadInfo {
-      margin-top: 15px;
-    }
-    
-    #uploadProgressModal .progress-container {
-      margin: 15px 0;
-      height: 20px;
-      border-radius: 10px;
-      overflow: hidden;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1) inset;
-    }
-    
-    #uploadProgressModal .progress-bar {
-      height: 100%;
-      background: linear-gradient(to right, var(--primary-light), var(--primary));
-      border-radius: 10px;
-      transition: width 0.3s ease;
-    }
-    
-    #uploadProgressModal .status-item {
-      margin-bottom: 10px;
       font-size: 14px;
-    }
-    
-    #uploadProgressModal .status-item i {
-      width: 20px;
-      margin-right: 8px;
-    }
-
-    /* Upload Progress Modal Styles */
-    #uploadProgressModal .modal-body {
-      padding: 20px;
-    }
-    
-    #uploadProgressModal .progress-container {
       margin-bottom: 15px;
     }
-    
-    #uploadProgressModal .modal-actions {
-      margin-top: 20px;
-      display: flex;
-      justify-content: center;
+    .breadcrumb span {
+      color: var(--primary-dark);
+      cursor: pointer;
     }
-    
-    #uploadProgressModal .modal-actions button {
-      min-width: 150px;
-      font-weight: 500;
+    .folder-list {
+      display: flex; flex-wrap: wrap; gap: 10px;
     }
+    .folder {
+      padding: 10px 15px; background: #fff; border: 1px solid var(--gray);
+      border-radius: 6px; cursor: pointer; transition: all 0.2s;
+    }
+    .folder:hover { background: var(--gray); }
+    .file-input-area {
+      border: 2px dashed var(--gray-dark);
+      padding: 30px; text-align: center; border-radius: 8px;
+      background: var(--gray-light);
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    .progress-container {
+      height: 20px; background: #ddd; border-radius: 8px; overflow: hidden;
+      margin: 10px 0; width: 100%;
+    }
+    .progress-bar {
+      height: 100%; width: 0%; background: #28a745; transition: width 0.3s;
+    }
+    #toast {
+      position: fixed; bottom: 20px; left: 20px;
+      background: #333; color: #fff; padding: 10px 15px;
+      border-radius: 8px; display: flex; align-items: center; gap: 10px;
+      opacity: 0; transform: translateY(100px); transition: all 0.3s;
+      z-index: 9999;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.success { background: green; }
+    #toast.error { background: #dc3545; }
+    #toast.info { background: var(--primary); }
   </style>
 </head>
 <body>
   <header>
     <h1><i class="fas fa-cloud-upload-alt"></i> Simple File Upload Server</h1>
-    <p>Upload files to any folder on your server with ease</p>
+    <p>Upload files to any folder on your server</p>
   </header>
-
   <div class="container">
-    <div class="card" id="explorer">
+    <!-- Explorer card -->
+    <div class="card" id="explorerCard">
       <div class="card-header">
-        <h2><i class="fas fa-folder"></i> File Explorer</h2>
-        <button class="secondary" onclick="showHowTo()"><i class="fas fa-question-circle"></i> Help</button>
+        <div>File Explorer</div>
+        <button class="secondary" onclick="showHelp()">Help</button>
       </div>
       <div class="card-body">
-        <nav aria-label="breadcrumb">
-          <ol class="breadcrumb" id="breadcrumb">
-            <li class="breadcrumb-item active"><i class="fas fa-home"></i> Root</li>
-          </ol>
-        </nav>
-        
-        <div id="folders" class="folder-list">Loading folders...</div>
-        
-    <div class="buttons">
-          <button onclick="goBack()"><i class="fas fa-arrow-left"></i> Back</button>
-      <button onclick="goUp()"><i class="fas fa-arrow-up"></i> Go Up</button>
-          <button onclick="selectFolder()"><i class="fas fa-check-circle"></i> Select This Folder</button>
+        <div class="breadcrumb" id="breadcrumb"></div>
+        <div id="folderContainer">
+          <div>Loading folders...</div>
         </div>
-    </div>
-  </div>
-
-    <div class="card" id="uploadForm" style="display: none;">
-      <div class="card-header">
-    <h2><i class="fas fa-upload"></i> Upload File</h2>
-        <div id="selectedPath">No folder selected</div>
+        <div style="margin-top: 15px;">
+          <button onclick="goBack()">Back</button>
+          <button onclick="goUp()">Up</button>
+          <button onclick="selectCurrentFolder()">Select This Folder</button>
+        </div>
       </div>
+    </div>
+    <!-- Upload card -->
+    <div class="card" id="uploadCard" style="display:none;">
+      <div class="card-header">Upload File</div>
       <div class="card-body">
-        <div class="file-input-container">
-          <div class="file-input-button">
-            <i class="fas fa-file-upload fa-2x"></i>
-            <div>
-              <p>Drop your file here or click to browse</p>
-              <p style="font-size: 12px; margin-top: 5px; opacity: 0.7;">Drag and drop files or click to select</p>
-            </div>
-          </div>
-          <input type="file" id="fileInput" onchange="updateFileInfo()">
+        <p>Selected folder: <span id="selectedFolderPath"></span></p>
+        <div class="file-input-area" 
+             id="dropZone" 
+             onclick="document.getElementById('fileInput').click()">
+          <p>Click or drag & drop a file here to upload</p>
         </div>
-
-        <div class="file-info" id="fileInfo">
-          <i class="fas fa-file"></i> <span id="fileName"></span> (<span id="fileSize"></span>)
+        <input type="file" id="fileInput" style="display:none;" onchange="onFileSelected()" />
+        <div id="fileInfo"></div>
+        <button id="startUploadBtn" onclick="startUpload()" style="display:none;">
+          Upload
+        </button>
+        <div class="progress-container" id="uploadProgress" style="display:none;">
+          <div class="progress-bar" id="uploadProgressBar"></div>
         </div>
-
-    <input type="hidden" name="targetPath" id="targetPath">
-        <div class="button-group">
-          <button type="button" id="uploadButton" onclick="uploadFile()"><i class="fas fa-cloud-upload-alt"></i> Upload File</button>
-        </div>
-
-    <div class="progress-container">
-      <div class="progress-bar"></div>
-    </div>
-
-    <div class="upload-info-container" id="uploadInfo"></div>
+        <div id="uploadStatus" style="font-size:14px; margin-top:10px;"></div>
       </div>
     </div>
   </div>
 
-  <!-- How-To Guide Modal -->
-  <div id="howToModal" class="modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2><i class="fas fa-book"></i> How to Use the File Server</h2>
-        <span class="close" onclick="closeHowTo()">&times;</span>
-      </div>
-      <div class="modal-body">
-        <div class="guide-section">
-          <h3><i class="fas fa-compass"></i> Navigation</h3>
-          <p>Navigate through folders to find the right location for your file:</p>
-          <ol class="guide-steps">
-            <li>Use the <strong>File Explorer</strong> to browse through folders</li>
-            <li>Click on any folder to navigate into it</li>
-            <li>Use the <strong>Back</strong> button to return to the previous folder</li>
-            <li>Use the <strong>Go Up</strong> button to navigate to the parent folder</li>
-            <li>The path display at the top shows your current location</li>
-          </ol>
-        </div>
-
-        <div class="guide-section">
-          <h3><i class="fas fa-upload"></i> Uploading Files</h3>
-          <p>Upload your files in just a few steps:</p>
-          <ol class="guide-steps">
-            <li>Navigate to the folder where you want to upload your file</li>
-            <li>Click <strong>Select This Folder</strong> to target this location</li>
-            <li>The upload form will appear below</li>
-            <li>Click on the upload area or drag & drop your file</li>
-            <li>Click the <strong>Upload File</strong> button to start the upload</li>
-            <li>You'll see a progress bar showing upload status</li>
-          </ol>
-        </div>
-
-        <div class="guide-section">
-          <h3><i class="fas fa-tachometer-alt"></i> Progress Tracking</h3>
-          <p>Track your upload progress in real-time:</p>
-          <ul class="guide-steps">
-            <li>The progress bar shows the percentage of completion</li>
-            <li>You'll see the upload speed (KB/s, MB/s)</li>
-            <li>Remaining file size and time estimate is displayed</li>
-            <li>A notification will appear when the upload completes</li>
-          </ul>
-        </div>
-
-        <div class="guide-section">
-          <h3><i class="fas fa-lightbulb"></i> Tips</h3>
-          <ul class="guide-steps">
-            <li>You can access this guide anytime by clicking the Help button</li>
-            <li>For large files, keep the browser window open until upload completes</li>
-            <li>The breadcrumb navigation allows quick jumps between folders</li>
-          </ul>
-        </div>
-      </div>
-    </div>
-  </div>
-  
-  <!-- Upload Progress Modal -->
-  <div id="uploadProgressModal" class="modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2><i class="fas fa-cloud-upload-alt"></i> Uploading File</h2>
-      </div>
-      <div class="modal-body">
-        <div class="progress-container">
-          <div id="modalProgressBar" class="progress-bar"></div>
-        </div>
-        <div id="modalUploadInfo" class="upload-info-container"></div>
-        <div class="modal-actions">
-          <button type="button" id="modalCancelButton" class="danger" onclick="cancelUpload()">
-            <i class="fas fa-times-circle"></i> Cancel Upload
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Help Button -->
-  <div class="help-button" onclick="showHowTo()">
-    <i class="fas fa-question"></i>
-  </div>
-
-  <!-- Toast Notification -->
-  <div id="toast">
-    <i class="fas fa-check-circle"></i>
-    <div>
-      <span id="toastMessage"></span>
-      <div id="errorDetails"></div>
-      <div class="toast-actions" id="toastActions"></div>
-    </div>
-  </div>
+  <!-- Simple toast -->
+  <div id="toast"><i class="fas fa-check-circle"></i><span id="toastMsg"></span></div>
 
   <script>
-    // Utility function to format file sizes
-    function formatSize(bytes) {
-      console.log('formatSize called with bytes:', bytes);
-      if (bytes === 0) return '0 B';
-      const k = 1024;
-      const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-      const i = Math.floor(Math.log(bytes) / Math.log(k));
-      const result = parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-      console.log('formatSize returning:', result);
-      return result;
-    }
-
-    // Config
-    const API_BASE_URL = window.location.origin;
-    
+    const API_BASE = window.location.origin;
     let currentPath = '/';
-    // Track navigation history for back button
-    let navigationHistory = [];
+    let historyStack = [];
 
-    function fetchFolders(dirPath = '/', addToHistory = true) {
-      document.getElementById('folders').innerHTML = '<div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Loading folders...</p></div>';
+    window.addEventListener('load', () => {
+      loadFolders('/');
+    });
 
-      // Add current path to history before navigating to new path
-      if (addToHistory && currentPath !== dirPath) {
-        navigationHistory.push(currentPath);
+    function loadFolders(dir, pushHistory=true) {
+      const container = document.getElementById('folderContainer');
+      container.innerHTML = '<div>Loading...</div>';
+      if (pushHistory && currentPath !== dir) {
+        historyStack.push(currentPath);
       }
-
-      fetch(`/list-folders?path=${encodeURIComponent(dirPath)}`)
-        .then(res => res.json())
+      fetch(`/list-folders?path=${encodeURIComponent(dir)}`)
+        .then(r => r.json())
         .then(data => {
           if (data.error) {
-            document.getElementById('folders').innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-triangle"></i><p>Error: ${data.error}</p></div>`;
+            container.innerHTML = `<div style="color:red;">Error: ${data.error}</div>`;
             return;
           }
-
           currentPath = data.path;
-          
-          // If we're at the Windows root, fetch and display drives
           if (data.isRoot) {
-            fetchDrives();
-            return;
+            // On Windows root, fetch drives
+            return loadDrives();
           }
-          
           updateBreadcrumb(currentPath);
-          const foldersDiv = document.getElementById('folders');
-          foldersDiv.innerHTML = '';
-
-          if (data.folders.length === 0) {
-            foldersDiv.innerHTML = `<div class="empty-state"><i class="fas fa-folder-open"></i><p>No subfolders found</p><small>This folder is empty</small></div>`;
+          if (!data.folders || data.folders.length === 0) {
+            container.innerHTML = `<div>No subfolders here.</div>`;
           } else {
-            data.folders.forEach(name => {
+            container.innerHTML = '';
+            const list = document.createElement('div');
+            list.className = 'folder-list';
+            data.folders.forEach(folderName => {
               const div = document.createElement('div');
               div.className = 'folder';
-              div.innerHTML = `<i class="fas fa-folder"></i> <span>${name}</span>`;
-              div.onclick = () => fetchFolders(`${currentPath === '/' ? '' : currentPath}/${name}`);
-              foldersDiv.appendChild(div);
+              div.innerText = folderName;
+              div.onclick = () => {
+                loadFolders(pathJoin(currentPath, folderName));
+              };
+              list.appendChild(div);
             });
+            container.appendChild(list);
           }
         })
         .catch(err => {
-          document.getElementById('folders').innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>Failed to load folders</p><small>Please try again</small></div>`;
+          container.innerHTML = `<div style="color:red;">Failed to load folders: ${err}</div>`;
         });
     }
-    
-    function fetchDrives() {
+
+    function loadDrives() {
       fetch('/list-drives')
-        .then(res => res.json())
+        .then(r => r.json())
         .then(data => {
-          if (data.error) {
-            document.getElementById('folders').innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-triangle"></i><p>Error: ${data.error}</p></div>`;
-            return;
-          }
-          
-          currentPath = '/';
-          updateBreadcrumb(currentPath, true);
-          
-          const foldersDiv = document.getElementById('folders');
-          foldersDiv.innerHTML = '';
-          
-          if (data.drives && data.drives.length > 0) {
-            data.drives.forEach(drive => {
+          updateBreadcrumb('My Computer');
+          const container = document.getElementById('folderContainer');
+          container.innerHTML = '';
+          if (data.drives && data.drives.length) {
+            const list = document.createElement('div');
+            list.className = 'folder-list';
+            data.drives.forEach(drv => {
               const div = document.createElement('div');
               div.className = 'folder';
-              div.innerHTML = `<i class="fas fa-hdd"></i> <span>${drive}</span>`;
-              div.onclick = () => fetchFolders(drive);
-              foldersDiv.appendChild(div);
+              div.innerText = drv;
+              div.onclick = () => loadFolders(drv);
+              list.appendChild(div);
             });
+            container.appendChild(list);
           } else {
-            foldersDiv.innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>No drives found</p></div>`;
+            container.innerHTML = 'No drives found.';
           }
         })
         .catch(err => {
-          document.getElementById('folders').innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>Failed to load drives</p><small>Please try again</small></div>`;
+          document.getElementById('folderContainer').innerHTML = 
+            `<div style="color:red;">Error loading drives: ${err}</div>`;
         });
-    }
-
-    function updateBreadcrumb(path, isRoot = false) {
-      const breadcrumb = document.getElementById('breadcrumb');
-      breadcrumb.innerHTML = ''; // Clear all breadcrumbs
-      
-      let displayPath;
-      
-      if (isRoot) {
-        // For Windows root (My Computer)
-        const li = document.createElement('li');
-        li.className = 'breadcrumb-item active';
-        li.innerHTML = '<i class="fas fa-desktop"></i> My Computer';
-        breadcrumb.appendChild(li);
-        return;
-      }
-      
-      // Handle drive paths or regular paths
-      if (path.match(/^[A-Z]:\\/i)) {
-        // Windows drive path
-        displayPath = path;
-      } else {
-        // Unix-style path
-        displayPath = path === '/' ? 'Root' : path;
-      }
-      
-      const li = document.createElement('li');
-      li.className = 'breadcrumb-item active';
-      li.innerHTML = path === '/' ? '<i class="fas fa-home"></i> Root' : displayPath;
-      breadcrumb.appendChild(li);
     }
 
     function goBack() {
-      if (navigationHistory.length === 0) {
-        showToast('No previous folder to go back to', 'info');
+      if (historyStack.length === 0) {
+        showToast('No previous folder', 'info');
         return;
       }
-      
-      const previousPath = navigationHistory.pop();
-      fetchFolders(previousPath, false); // Don't add to history when going back
+      const prev = historyStack.pop();
+      loadFolders(prev, false);
     }
 
     function goUp() {
-      if (currentPath === '/') {
-        // Already at root, do nothing or show a message
-        showToast('Already at the root level', 'info');
+      if (currentPath === '/' || currentPath === 'My Computer') {
+        showToast('Already at root', 'info');
         return;
       }
-      
-      const parts = currentPath.split(/[\/\\]/).filter(part => part);
-      
-      // Handle Windows drive paths (C:\)
-      if (parts.length === 1 && parts[0].endsWith(':')) {
-        fetchFolders('/'); // Go to drives list
+      // If windows drive
+      if (/^[A-Za-z]:\\?$/.test(currentPath)) {
+        loadFolders('/'); // go back to "My Computer"
         return;
       }
-      
+      const parts = currentPath.split(/[\\/]/).filter(Boolean);
       parts.pop();
-      
-      // If we've gone up to a drive root (like C:\)
-      if (parts.length === 1 && parts[0].endsWith(':')) {
-        fetchFolders(parts[0] + '\\');
+      let upPath = parts.join('/');
+      if (upPath === '') upPath = '/';
+      loadFolders(upPath);
+    }
+
+    function updateBreadcrumb(label) {
+      const bc = document.getElementById('breadcrumb');
+      bc.innerHTML = `<span>${label}</span>`;
+    }
+
+    function pathJoin(base, folder) {
+      if (base === '/') return '/' + folder;
+      // For Windows:
+      if (/^[A-Za-z]:\\?$/.test(base)) {
+        return base.replace(/\\?$/, '') + '\\' + folder;
+      }
+      // Normal path
+      return base.replace(/\/$/, '') + '/' + folder;
+    }
+
+    function selectCurrentFolder() {
+      document.getElementById('uploadCard').style.display = 'block';
+      document.getElementById('selectedFolderPath').textContent = currentPath;
+      showToast('Folder selected: ' + currentPath, 'info');
+      // Reset upload UI
+      document.getElementById('fileInfo').innerHTML = '';
+      document.getElementById('startUploadBtn').style.display = 'none';
+      document.getElementById('uploadProgress').style.display = 'none';
+      document.getElementById('uploadStatus').innerHTML = '';
+    }
+
+    // File selection + upload
+    let selectedFile = null;
+    function onFileSelected() {
+      const input = document.getElementById('fileInput');
+      selectedFile = input.files[0];
+      if (!selectedFile) return;
+      document.getElementById('fileInfo').innerHTML = `
+        <div><strong>File:</strong> ${selectedFile.name} (${formatSize(selectedFile.size)})</div>`;
+      document.getElementById('startUploadBtn').style.display = 'inline-block';
+    }
+
+    function startUpload() {
+      if (!selectedFile) {
+        showToast('No file selected', 'error');
         return;
       }
-      
-      fetchFolders('/' + parts.join('/'));
-    }
-
-    function selectFolder() {
-      document.getElementById('targetPath').value = currentPath;
-      document.getElementById('selectedPath').textContent = `Selected: ${currentPath}`;
-      document.getElementById('uploadForm').style.display = 'block';
-      
-      // Scroll to the upload form
-      document.getElementById('uploadForm').scrollIntoView({ behavior: 'smooth' });
-      
-      showToast('Folder selected! You can now upload files.', 'success');
-    }
-
-    function updateFileInfo() {
-      const file = document.getElementById('fileInput').files[0];
-      if (file) {
-        document.getElementById('fileInfo').style.display = 'block';
-        document.getElementById('fileName').textContent = file.name;
-        document.getElementById('fileSize').textContent = formatSize(file.size);
-        
-        // Change icon based on file type
-        const fileIcon = document.querySelector('#fileInfo i');
-        const fileExtension = file.name.split('.').pop().toLowerCase();
-        
-        if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(fileExtension)) {
-          fileIcon.className = 'fas fa-file-image';
-        } else if (['pdf'].includes(fileExtension)) {
-          fileIcon.className = 'fas fa-file-pdf';
-        } else if (['doc', 'docx'].includes(fileExtension)) {
-          fileIcon.className = 'fas fa-file-word';
-        } else if (['xls', 'xlsx', 'csv'].includes(fileExtension)) {
-          fileIcon.className = 'fas fa-file-excel';
-        } else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(fileExtension)) {
-          fileIcon.className = 'fas fa-file-archive';
-        } else if (['mp4', 'avi', 'mov', 'wmv'].includes(fileExtension)) {
-          fileIcon.className = 'fas fa-file-video';
-        } else if (['mp3', 'wav', 'ogg'].includes(fileExtension)) {
-          fileIcon.className = 'fas fa-file-audio';
-        } else if (['html', 'css', 'js', 'php', 'py', 'java', 'c', 'cpp'].includes(fileExtension)) {
-          fileIcon.className = 'fas fa-file-code';
-        } else {
-          fileIcon.className = 'fas fa-file';
-        }
-      }
-    }
-
-    // Global variables for uploads
-    let isUploading = false;
-    let chunkUploadAborted = false;
-    let isThrottled = false;
-    let lastChunkBytes = 0;
-    let uploadSpeeds = [];
-    const SPEED_WINDOW_SIZE = 10; // Increase speed sampling window for smoother average
-    let lastProgressTime = 0;
-    let retryCount = 0;
-    let retryDelay = 1000;
-    const MAX_RETRY_COUNT = 5;
-    const MAX_RETRY_DELAY = 16000; // 16 seconds max delay
-    let currentChunk = 0; // Current chunk being uploaded
-    let totalChunks = 0; // Total number of chunks for current upload
-    let lastVisibilityNotification = 0; // Track when last notification was shown
-    let lastUIUpdate = 0; // Track when last UI update was made
-    let optimalChunkSize = 5 * 1024 * 1024; // Dynamic - will be adjusted
-    let uploadedFileId = null; // Store the fileId from the server
-    let uploadedBytes = 0; // Track total bytes uploaded
-    let uploadStartTime = 0; // Track when upload started
-    let overallStartTime = 0; // Track overall start time for better ETA calculation
-    let speedSamples = []; // Track speed samples for trend analysis
-    let lastSpeedAdjustmentTime = 0; // Track when we last adjusted chunk size
-    let adaptiveAdjustmentEnabled = true; // Flag to enable/disable adaptive adjustments
-    let networkCondition = 'unknown'; // Tracks network condition
-    let uploadPerformance = []; // Tracks upload performance metrics
-    let systemMemory = null; // Will store detected system memory if available
-    let connectionType = null; // Will store connection type if available
-    let chunkSizeHistory = []; // Track chunk size changes
-    let adaptationFrequency = 3; // Check for adaptation every N chunks
-    let uploadHeartbeatInterval = null; // Interval to check upload status
-    let lastHeartbeat = 0; // Time of last heartbeat
-    let uploadingFileName = null; // Name of the file currently being uploaded
-    let uploadChecksums = []; // Track checksums of uploaded chunks for verification
-    
-    // Detect system capabilities when page loads
-    window.addEventListener('load', function() {
-      detectSystemCapabilities();
-      
-      // Run a small speed test to determine initial network speed
-      if (navigator.onLine) {
-        runSpeedTest();
-      }
-    });
-    
-    // Detect system capabilities
-    function detectSystemCapabilities() {
-      // Get connection info if available
-      if (navigator.connection) {
-        connectionType = navigator.connection.effectiveType;
-        console.log(`Detected connection type: ${connectionType}`);
-        
-        // Listen for connection changes
-        navigator.connection.addEventListener('change', function() {
-          connectionType = navigator.connection.effectiveType;
-          console.log(`Connection type changed to: ${connectionType}`);
-        });
-      }
-      
-      // Get memory info if available
-      if (navigator.deviceMemory) {
-        systemMemory = navigator.deviceMemory;
-        console.log(`Detected device memory: ${systemMemory}GB`);
-      }
-    }
-    
-    // Run a small speed test to determine initial network speed
-    function runSpeedTest() {
-      const testUrl = '/speed-test?size=500KB&noCache=' + Date.now();
-      const startTime = Date.now();
-      
-      fetch(testUrl)
-        .then(response => response.blob())
-        .then(data => {
-          const endTime = Date.now();
-          const duration = (endTime - startTime) / 1000; // seconds
-          const sizeMB = data.size / (1024 * 1024); // MB
-          const speedMBps = sizeMB / duration;
-          
-          // Add to speed samples
-          speedSamples.push(speedMBps * 1024 * 1024); // Convert to bytes/sec
-          
-          console.log(`Speed test result: ${(speedMBps).toFixed(2)} MB/s`);
-        })
-        .catch(err => {
-          console.warn('Speed test failed:', err);
-        });
-    }
-    
-    // Heartbeat function to ensure UI stays in sync with actual upload state
-    function startUploadHeartbeat() {
-      lastHeartbeat = Date.now();
-      
-      if (uploadHeartbeatInterval) {
-        clearInterval(uploadHeartbeatInterval);
-      }
-      
-      uploadHeartbeatInterval = setInterval(() => {
-        if (!isUploading) {
-          // If we're not uploading, clear the interval
-          clearInterval(uploadHeartbeatInterval);
-          uploadHeartbeatInterval = null;
-          return;
-        }
-        
-        const now = Date.now();
-        
-        // If no progress update for 15 seconds (reduced from 30), something might be wrong
-        if (now - lastProgressTime > 15000) {
-          console.warn('Upload heartbeat detected stalled upload');
-          
-          // Check with server if the upload is still active
-          if (uploadedFileId) {
-            checkUploadStatus(uploadedFileId).then(status => {
-              if (status.exists) {
-                // Check if the server reported an error
-                if (status.error) {
-                  console.error('Server reported error:', status.error);
-                  handleServerError(status.error);
-                  return;
-                }
-                
-                // Upload is still on server, show an appropriate message
-                document.getElementById('uploadInfo').innerHTML = 
-                  `<i class="fas fa-exclamation-triangle"></i> <span class="inline-status">Upload appears stalled</span><span class="status-divider">|</span><span class="inline-status">Server has received ${status.receivedChunks.length} chunks</span>`;
-              } else {
-                // Check if the server reported an error
-                if (status.error) {
-                  console.error('Server reported error:', status.error);
-                  handleServerError(status.error);
-                  return;
-                }
-                
-                // Upload doesn't exist on server anymore
-                handleUploadDisappeared();
-              }
-            }).catch(err => {
-              console.error('Error checking upload status:', err);
-              showToast('Connection to server lost', 'error', 'Cannot verify upload status');
-              handleUploadDisappeared();
-            });
-          } else {
-            // We don't have a fileId, so we can't check with the server
-            handleUploadDisappeared();
-          }
-        }
-        
-        // Update the heartbeat
-        lastHeartbeat = now;
-      }, 5000); // Check every 5 seconds
-    }
-    
-    // Function to check with server about upload status
-    function checkUploadStatus(fileId) {
-      return new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('GET', `/check-upload?fileId=${fileId}`, true);
-        xhr.responseType = 'json';
-        
-        xhr.onload = function() {
-          if (xhr.status === 200) {
-            resolve(xhr.response);
-          } else {
-            reject(new Error(`Server returned status ${xhr.status}`));
-          }
-        };
-        
-        xhr.onerror = function() {
-          reject(new Error('Network error while checking upload status'));
-        };
-        
-        xhr.timeout = 10000; // 10-second timeout
-        xhr.ontimeout = function() {
-          reject(new Error('Timeout while checking upload status'));
-        };
-        
-        xhr.send();
-      });
-    }
-    
-    // Handle case where upload disappeared
-    function handleUploadDisappeared() {
-      console.error('Upload disappeared from server');
-      
-      // Show error in UI with consistent layout
-      document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-exclamation-circle"></i> <span class="inline-status">Upload has been lost</span>`;
-      
-      // Update internal state
-      isUploading = false;
-      
-      // Display toast notification
-      showToast('Upload connection lost', 'error', 'The upload process was interrupted unexpectedly');
-      
-      // Keep the progress bar visible but indicate error
-      const progressBar = document.querySelector('.progress-bar');
-      if (progressBar) {
-        progressBar.style.backgroundColor = '#f44336';
-      }
-    }
-    
-    // Calculate MD5 hash of a chunk for verification
-    function calculateMD5(blob) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsArrayBuffer(blob);
-        
-        reader.onload = function() {
-          const buffer = reader.result;
-          const wordArray = CryptoJS.lib.WordArray.create(buffer);
-          const hash = CryptoJS.MD5(wordArray).toString();
-          resolve(hash);
-        };
-        
-        reader.onerror = function() {
-          reject(new Error('Failed to read file for MD5 calculation'));
-        };
-      });
-    }
-    
-    // Handle server-reported errors
-    function handleServerError(error) {
-      console.error('Server reported upload error:', error);
-      
-      // Show detailed error in UI - single line format
-      document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-exclamation-circle"></i> <span class="inline-status">Error: ${error.message || 'Unknown error'}</span>` +
-        (error.code ? `<span class="status-divider">|</span><span class="inline-status">Code: ${error.code}</span>` : '');
-      
-      // Update internal state
-      isUploading = false;
-      
-      // Display toast notification
-      showToast('Upload failed', 'error', error.message || 'Server reported an error');
-      
-      // Keep the progress bar visible but indicate error
-      const progressBar = document.querySelector('.progress-bar');
-      if (progressBar) {
-        progressBar.style.backgroundColor = '#f44336';
-      }
-    }
-    
-    // Track visibility changes
-    document.addEventListener('visibilitychange', function() {
-      if (isUploading) {
-        isThrottled = document.hidden;
-        // Remove the notification message completely
-        
-        // When coming back to the tab, check if upload is still active
-        if (!document.hidden && Date.now() - lastProgressTime > 10000) {
-          console.log('Tab became visible again, checking upload status');
-          
-          // If we have a fileId, check the status with the server
-          if (uploadedFileId) {
-            checkUploadStatus(uploadedFileId).then(status => {
-              if (!status.exists) {
-                // Upload doesn't exist on server anymore
-                handleUploadDisappeared();
-              }
-            }).catch(err => {
-              console.error('Error checking upload status on tab visibility change:', err);
-            });
-          }
-        }
-      }
-    });
-    
-    function uploadFile() {
-      console.log('uploadFile function called');
-      
-      // Check for undefined global variables and set defaults
-      // ... existing code ...
-      
-      // Now continue with the upload process
-      const fileInput = document.getElementById('fileInput');
-      console.log('fileInput exists:', !!fileInput);
-      console.log('fileInput.files:', fileInput.files);
-      
-      const file = fileInput.files[0];
-      if (!file) {
-        console.log('No file selected');
-        showToast('Please select a file first!', 'error');
+      const folder = currentPath;
+      if (!folder) {
+        showToast('No target folder', 'error');
         return;
       }
 
-      console.log('Starting upload for file:', file.name, 'size:', file.size);
-      
-      // Store the file name for potential recovery
-      uploadingFileName = file.name;
-
-      // Get target path for upload
-      const targetPath = document.getElementById('targetPath').value;
-      console.log('Upload target path:', targetPath);
-      
-      // Verify we have a valid target path
-      if (!targetPath) {
-        console.error('No target path specified for upload');
-        showToast('No upload path selected!', 'error');
-        return;
-      }
-
-      // Show the upload progress modal
-      document.getElementById('uploadProgressModal').classList.add('show');
-      
-      // Reset upload state
-      isUploading = true;
-      uploadStartTime = Date.now();
-      overallStartTime = Date.now();
-      uploadedBytes = 0;
-      
-      // Hide the main page progress display and info container
-      document.querySelector('.progress-container').style.display = 'none';
-      document.getElementById('uploadInfo').style.display = 'none';
-      
-      // Upload the entire file as a single chunk
-      uploadSingleChunk(file);
-      updateUploadButtonState(true);
-    }
-    
-    // Upload entire file as a single chunk
-    function uploadSingleChunk(file) {
-      try {
-        // Prepare upload
-        const xhr = new XMLHttpRequest();
-        
-        // Store reference for potential cancellation
-        window.currentXhr = xhr;
-        
-        // Get the target path from the hidden input
-        const targetPath = document.getElementById('targetPath').value;
-        console.log('Using target path for upload:', targetPath);
-        
-        // Build the URL including target path
-        const uploadUrl = `/upload-chunk?path=${encodeURIComponent(targetPath || '/')}&originalFileName=${encodeURIComponent(file.name)}`;
-        console.log('Opening XHR connection to', uploadUrl);
-        
-        xhr.open('POST', uploadUrl, true);
-        
-        // Set headers for upload
-        xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
-        xhr.setRequestHeader('X-Chunk-Index', 0);
-        xhr.setRequestHeader('X-Total-Chunks', 1);
-        xhr.setRequestHeader('Content-Type', 'application/octet-stream'); // Ensure binary data is sent correctly
-        
-        // Performance optimizations
-        xhr.setRequestHeader('X-Client-Speed', navigator.connection?.downlink || 10); // Estimated connection speed
-        
-        // Disable timeout - important for large files
-        xhr.timeout = 0;
-        
-        // Enable binary transfer
-        xhr.responseType = 'arraybuffer';
-        
-        // Update progress display
-        document.getElementById('modalUploadInfo').innerHTML = `
-          <div class="upload-status">
-            <div class="status-item">
-              <i class="fas fa-upload"></i> Uploading ${file.name}
-            </div>
-          </div>
-        `;
-        
-        // Set up progress tracking
-        xhr.upload.onprogress = function(e) {
-          if (e.lengthComputable) {
-            uploadedBytes = e.loaded;
-            const now = Date.now();
-            const percent = Math.min(100, Math.round((uploadedBytes / file.size) * 100));
-            
-            // Update progress bar
-            document.getElementById('modalProgressBar').style.width = percent + '%';
-            
-            // Calculate speed
-            const timeElapsed = (now - uploadStartTime) / 1000; // seconds
-            const uploadSpeed = uploadedBytes / timeElapsed; // bytes per second
-            const speedText = formatSize(uploadSpeed) + '/s';
-            
-            // Calculate ETA
-            const remainingBytes = file.size - uploadedBytes;
-            const eta = remainingBytes / uploadSpeed;
-            const etaText = formatTime(eta);
-            
-            // Update status display
-            document.getElementById('modalUploadInfo').innerHTML = `
-              <div class="upload-status">
-                <div class="status-item">
-                  <i class="fas fa-upload"></i> Progress: <strong>${percent}%</strong> (${formatSize(uploadedBytes)} of ${formatSize(file.size)})
-                </div>
-                <div class="status-item">
-                  <i class="fas fa-tachometer-alt"></i> Speed: <strong>${speedText}</strong>
-                </div>
-                <div class="status-item">
-                  <i class="fas fa-clock"></i> Time remaining: <strong>${etaText}</strong>
-                </div>
-              </div>
-            `;
-          }
-        };
-        
-        // Handle upload completion
-        xhr.onload = function() {
-          if (xhr.status === 200) {
-            try {
-              const response = JSON.parse(xhr.responseText);
-              
-              if (!response.success) {
-                handleUploadError(xhr, file, null, response.error?.message || 'Server error', response.error);
-                return;
-              }
-              
-              // Upload successful
-              console.log(`Upload of ${file.name} completed!`);
-              isUploading = false;
-              
-              // Hide the upload progress modal
-              document.getElementById('uploadProgressModal').classList.remove('show');
-              
-              // Show success message
-              showToast(`Upload of ${file.name} completed successfully!`, 'success');
-              
-              // Reset UI
-              updateUploadButtonState(false);
-              
-              // Refresh file list
-              const urlParams = new URLSearchParams(window.location.search);
-              loadFileList(urlParams.get('path') || '');
-            } catch (error) {
-              handleUploadError(xhr, file, null, 'Failed to parse server response', { error });
-            }
-          } else {
-            handleUploadError(xhr, file, null, `Server error: ${xhr.status}`, { status: xhr.status });
-          }
-        };
-        
-        // Handle errors
-        xhr.onerror = function() {
-          handleUploadError(xhr, file, null, 'Network error occurred', { type: 'network' });
-        };
-        
-        xhr.ontimeout = function() {
-          handleUploadError(xhr, file, null, 'Request timed out', { type: 'timeout' });
-        };
-        
-        xhr.onabort = function() {
-          handleUploadError(xhr, file, null, 'Upload was aborted', { type: 'abort' });
-        };
-        
-        // Send the file directly
-        console.log('Sending file as single chunk:', file.size, 'bytes');
-        xhr.send(file);
-        
-      } catch (error) {
-        handleUploadError(null, file, null, 'Failed to prepare upload', { error });
-      }
-    }
-
-    function updateUploadButtonState(isDisabled) {
-      document.getElementById('uploadButton').disabled = isDisabled;
-    }
-    
-    // Function to handle upload errors with retry logic
-    function handleUploadError(xhr, file, fileId, errorMessage, errorDetails) {
-      console.error('Upload error:', errorMessage, errorDetails);
-      
-      // End upload process
-      isUploading = false;
-      
-      // Hide the upload progress modal
-      document.getElementById('uploadProgressModal').classList.remove('show');
-      
-      // Show error message to user
-      showToast(errorMessage, 'error', errorDetails?.details);
-      
-      // Reset UI
-      updateUploadButtonState(false);
-    }
-    
-    // Update progress UI with current status
-    function updateProgress() {
-      if (!isUploading) {
-        // Reset progress bar when not uploading
-        document.querySelector('.progress-bar').style.width = '0%';
-        document.getElementById('uploadInfo').textContent = '';
-        // Hide the modal if it's showing
-        document.getElementById('uploadProgressModal').classList.remove('show');
-        updateUploadButtonState(false);
-        return;
-      }
-      
-      const progressBar = document.querySelector('.progress-bar');
-      const modalProgressBar = document.getElementById('modalProgressBar');
-      const file = document.getElementById('fileInput').files[0];
-      if (!file || !progressBar) return;
-      
-      // Calculate percentage
-      const percent = Math.min(100, Math.round((uploadedBytes / file.size) * 100));
-      progressBar.style.width = percent + '%';
-      if (modalProgressBar) modalProgressBar.style.width = percent + '%';
-      
-      // Calculate speed (use 0 if no speeds recorded)
-      let avgSpeed = 0;
-      if (uploadSpeeds.length > 0) {
-        avgSpeed = uploadSpeeds.reduce((a, b) => a + b, 0) / uploadSpeeds.length;
-      }
-      
-      // Calculate estimated time remaining
-      const remainingBytes = file.size - uploadedBytes;
-      let eta = remainingBytes / (avgSpeed || 1); // Use 1 to avoid division by zero
-      
-      if (!isFinite(eta) || isNaN(eta)) {
-        eta = 0;
-      }
-      
-      // Always show all information, even if some values are still calculating
-      const speedText = avgSpeed > 0 ? formatSize(avgSpeed) + '/s' : 'calculating...';
-      const etaText = formatTime(eta);
-      const progressText = `${formatSize(uploadedBytes)} of ${formatSize(file.size)}`;
-      
-      // Create the status HTML
-      const statusHTML = `
-        <div class="upload-status">
-          <div class="status-item">
-            <i class="fas fa-upload"></i> Progress: <strong>${percent}%</strong> (${progressText})
-          </div>
-          <div class="status-item">
-            <i class="fas fa-exchange-alt"></i> Uploading chunk <strong>${currentChunk + 1}/${totalChunks}</strong>
-          </div>
-          <div class="status-item">
-            <i class="fas fa-tachometer-alt"></i> Speed: <strong>${speedText}</strong>
-          </div>
-          <div class="status-item">
-            <i class="fas fa-clock"></i> Time remaining: <strong>${etaText}</strong>
-          </div>
-        </div>
-      `;
-      
-      // Update both the page and the modal with the same information
-      document.getElementById('uploadInfo').innerHTML = statusHTML;
-      document.getElementById('modalUploadInfo').innerHTML = statusHTML;
-    }
-    
-    // Format time in seconds to a human-readable string
-    function formatTime(seconds) {
-      if (!isFinite(seconds) || seconds === 0) return 'calculating...';
-      
-      if (seconds < 60) return Math.round(seconds) + ' sec';
-      if (seconds < 3600) {
-        const minutes = Math.floor(seconds / 60);
-        const sec = Math.round(seconds % 60);
-        return `${minutes} min ${sec} sec`;
-      }
-      
-      const hours = Math.floor(seconds / 3600);
-      const minutes = Math.floor((seconds % 3600) / 60);
-      return `${hours} hr ${minutes} min`;
-    }
-    
-    // Function to load file list
-    function loadFileList(path) {
-      fetch(`/list-files?path=${encodeURIComponent(path || '/')}`)
-        .then(res => res.json())
-        .then(data => {
-          // Handle file list refresh
-          if (data.success) {
-            console.log('File list refreshed');
-          }
-        })
-        .catch(err => {
-          console.error('Error refreshing file list:', err);
-        });
-    }
-
-    function showHowTo() {
-      const modal = document.getElementById('howToModal');
-      modal.style.display = 'flex';
-      document.body.style.overflow = 'hidden'; // Prevent scrolling behind modal
-    }
-
-    function closeHowTo() {
-      document.getElementById('howToModal').style.display = 'none';
-      document.body.style.overflow = ''; // Restore scrolling
-    }
-
-    function showToast(message, type = '', details = null, duration = 5000) {
-      const toast = document.getElementById('toast');
-      const toastMessage = document.getElementById('toastMessage');
-      const errorDetails = document.getElementById('errorDetails');
-      const toastActions = document.getElementById('toastActions');
-      const icon = toast.querySelector('i');
-      
-      // Clear previous content
-      toastMessage.textContent = message;
-      errorDetails.textContent = '';
-      errorDetails.className = '';
-      toastActions.innerHTML = '';
-      
-      // Update icon based on message type
-      if (type === 'success') {
-        icon.className = 'fas fa-check-circle';
-      } else if (type === 'error') {
-        icon.className = 'fas fa-times-circle';
-      } else if (type === 'info') {
-        icon.className = 'fas fa-info-circle';
-      } else if (type === 'warning') {
-        icon.className = 'fas fa-exclamation-triangle';
+      // Decide single-chunk vs multi-chunk
+      const MAX_SINGLE_CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
+      if (selectedFile.size <= MAX_SINGLE_CHUNK_SIZE) {
+        // single chunk
+        uploadSingleChunk(selectedFile, folder);
       } else {
-        icon.className = 'fas fa-bell';
-      }
-      
-      // Set class for styling
-      toast.className = type ? `show ${type}` : 'show';
-      
-      // For longer messages, ensure enough time to read
-      const minDuration = Math.max(2000, message.length * 50);
-      let actualDuration = Math.max(duration, minDuration);
-      
-      // Add error details if provided
-      if (details && type === 'error') {
-        errorDetails.textContent = typeof details === 'object' ? 
-          JSON.stringify(details, null, 2) : details.toString();
-        errorDetails.className = 'has-details';
-        toast.className += ' detailed';
-        
-        // Add copy button for error details
-        const copyButton = document.createElement('button');
-        copyButton.innerHTML = '<i class="fas fa-copy"></i> Copy Error';
-        copyButton.onclick = function() {
-          navigator.clipboard.writeText(
-            `Error: ${message}\nDetails: ${errorDetails.textContent}`
-          ).then(() => {
-            copyButton.innerHTML = '<i class="fas fa-check"></i> Copied!';
-            setTimeout(() => {
-              copyButton.innerHTML = '<i class="fas fa-copy"></i> Copy Error';
-            }, 2000);
-          });
-        };
-        toastActions.appendChild(copyButton);
-        
-        // Longer duration for errors with details
-        actualDuration = Math.max(actualDuration, 15000);
-      }
-      
-      // Hide after duration
-      setTimeout(function(){ 
-        toast.className = toast.className.replace("show", ""); 
-      }, actualDuration);
-    }
-
-    // Event listeners
-    window.onclick = function(event) {
-      const modal = document.getElementById('howToModal');
-      if (event.target === modal) {
-        closeHowTo();
+        // multi-chunk
+        uploadMultiChunk(selectedFile, folder);
       }
     }
 
-    // Support for drag & drop
-    const dropArea = document.querySelector('.file-input-container');
-    
-    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-      dropArea.addEventListener(eventName, preventDefaults, false);
-    });
-    
-    function preventDefaults(e) {
+    function uploadSingleChunk(file, folder) {
+      showToast(`Uploading ${file.name} (single chunk)`, 'info');
+      document.getElementById('uploadProgress').style.display = 'block';
+      document.getElementById('uploadProgressBar').style.width = '0%';
+      document.getElementById('uploadStatus').textContent = 'Uploading...';
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `/upload-chunk?path=${encodeURIComponent(folder)}`, true);
+      xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+      xhr.setRequestHeader('X-Chunk-Index', '0');
+      xhr.setRequestHeader('X-Total-Chunks', '1');
+      xhr.setRequestHeader('X-Chunk-Size', file.size);
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = (e.loaded / e.total) * 100;
+          document.getElementById('uploadProgressBar').style.width = pct + '%';
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          try {
+            const resp = JSON.parse(xhr.responseText);
+            if (resp.success) {
+              document.getElementById('uploadProgressBar').style.width = '100%';
+              document.getElementById('uploadStatus').textContent = 'Upload complete';
+              showToast('Upload complete!', 'success');
+            } else {
+              showToast(resp.error || 'Server error', 'error');
+            }
+          } catch {
+            showToast('Invalid response from server', 'error');
+          }
+        } else {
+          showToast(`Error: ${xhr.status}`, 'error');
+        }
+      };
+      xhr.onerror = () => {
+        showToast('Network error', 'error');
+      };
+
+      xhr.send(file);
+    }
+
+    // MULTI-CHUNK
+    let chunkSize = 5 * 1024 * 1024;
+    let currentChunkIndex = 0;
+    let totalChunks = 0;
+    let fileId = null;
+
+    function uploadMultiChunk(file, folder) {
+      // Setup UI
+      showToast(`Uploading ${file.name} (multi-chunk)`, 'info');
+      document.getElementById('uploadProgress').style.display = 'block';
+      document.getElementById('uploadProgressBar').style.width = '0%';
+      document.getElementById('uploadStatus').textContent = 'Preparing...';
+
+      // Setup state
+      chunkSize = 5 * 1024 * 1024; // 5MB chunks
+      totalChunks = Math.ceil(file.size / chunkSize);
+      currentChunkIndex = 0;
+      fileId = Date.now().toString(); // or any unique ID
+
+      // Start
+      uploadNextChunk(file, folder);
+    }
+
+    function uploadNextChunk(file, folder) {
+      if (currentChunkIndex >= totalChunks) {
+        // done
+        showToast('All chunks sent!', 'info');
+        return;
+      }
+      const start = currentChunkIndex * chunkSize;
+      const end = Math.min(file.size, start + chunkSize);
+      const blob = file.slice(start, end);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `/upload-chunk?path=${encodeURIComponent(folder)}`, true);
+      xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+      xhr.setRequestHeader('X-Chunk-Index', currentChunkIndex);
+      xhr.setRequestHeader('X-Total-Chunks', totalChunks);
+      xhr.setRequestHeader('X-File-Id', fileId);
+      xhr.setRequestHeader('X-Chunk-Size', blob.size);
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const chunkPercent = e.loaded / e.total;
+          const overallBytes = (currentChunkIndex * chunkSize) + e.loaded;
+          const overallPercent = Math.floor((overallBytes / file.size) * 100);
+          document.getElementById('uploadProgressBar').style.width = overallPercent + '%';
+          document.getElementById('uploadStatus').textContent = 
+            `Chunk ${currentChunkIndex+1}/${totalChunks} - ${overallPercent}% overall`;
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          try {
+            const resp = JSON.parse(xhr.responseText);
+            if (!resp.success) {
+              showToast(resp.error || 'Server error chunk', 'error');
+              return;
+            }
+            // success
+            if (currentChunkIndex === totalChunks - 1) {
+              // last chunk => server finalizes
+              document.getElementById('uploadProgressBar').style.width = '100%';
+              document.getElementById('uploadStatus').textContent = 'Upload complete';
+              showToast('Upload complete!', 'success');
+            } else {
+              currentChunkIndex++;
+              uploadNextChunk(file, folder);
+            }
+          } catch {
+            showToast('Invalid JSON response from server', 'error');
+          }
+        } else {
+          showToast(`Error uploading chunk ${currentChunkIndex}`, 'error');
+        }
+      };
+      xhr.onerror = () => {
+        showToast(`Network error chunk ${currentChunkIndex}`, 'error');
+      };
+      xhr.send(blob);
+    }
+
+    // Drag drop
+    const dropZone = document.getElementById('dropZone');
+    dropZone.addEventListener('dragover', e => {
       e.preventDefault();
       e.stopPropagation();
-    }
-    
-    ['dragenter', 'dragover'].forEach(eventName => {
-      dropArea.addEventListener(eventName, highlight, false);
+      dropZone.style.borderColor = '#4361ee';
     });
-    
-    ['dragleave', 'drop'].forEach(eventName => {
-      dropArea.addEventListener(eventName, unhighlight, false);
+    dropZone.addEventListener('dragleave', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.style.borderColor = '';
     });
-    
-    function highlight() {
-      dropArea.querySelector('.file-input-button').style.borderColor = 'var(--primary)';
-      dropArea.querySelector('.file-input-button').style.backgroundColor = 'rgba(67, 97, 238, 0.05)';
-    }
-    
-    function unhighlight() {
-      dropArea.querySelector('.file-input-button').style.borderColor = 'var(--gray-dark)';
-      dropArea.querySelector('.file-input-button').style.backgroundColor = 'var(--gray-light)';
-    }
-    
-    dropArea.addEventListener('drop', handleDrop, false);
-    
-    function handleDrop(e) {
-      const dt = e.dataTransfer;
-      const files = dt.files;
-      document.getElementById('fileInput').files = files;
-      updateFileInfo();
-    }
-
-    // Show how-to guide on first visit
-    window.onload = () => {
-      fetchFolders('/');
-      
-      // Check for unfinished uploads
-      setTimeout(() => {
-        checkForUnfinishedUploads();
-      }, 1000); // Check after 1 second to avoid delaying initial page load
-    };
-
-    function cancelUpload() {
-      if (isUploading) {
-        // If any XHR is in progress, abort it
-        if (window.currentXhr) {
-          window.currentXhr.abort();
-          window.currentXhr = null;
-        }
-        
-        showToast('Upload cancelled.', 'info');
-        isUploading = false;
-        
-        // Hide the upload modal
-        document.getElementById('uploadProgressModal').classList.remove('show');
-        
-        updateUploadButtonState(false);
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.style.borderColor = '';
+      if (e.dataTransfer.files.length) {
+        document.getElementById('fileInput').files = e.dataTransfer.files;
+        onFileSelected();
       }
-    }
+    });
 
-    // Add upload resumption support
-    function checkForUnfinishedUploads() {
-      try {
-        const lastUploadTime = localStorage.getItem('lastUploadTime');
-        const fileId = localStorage.getItem('lastUploadFileId');
-        const fileName = localStorage.getItem('lastUploadFileName');
-        const lastChunkIndex = localStorage.getItem('lastChunkIndex');
-        const totalChunks = localStorage.getItem('totalChunks');
-        
-        // Check if we have all the required data and if it's recent (less than 24 hours old)
-        if (lastUploadTime && fileId && fileName && lastChunkIndex && totalChunks) {
-          const timeElapsed = Date.now() - parseInt(lastUploadTime);
-          const hoursElapsed = timeElapsed / (1000 * 60 * 60);
-          
-          if (hoursElapsed < 24) {
-            // Show resume option
-            showResumeUploadDialog(fileName, parseInt(lastChunkIndex), parseInt(totalChunks), fileId);
-          } else {
-            // Clear old data
-            clearUnfinishedUploadData();
-          }
-        }
-      } catch (error) {
-        console.warn('Error checking for unfinished uploads:', error);
-      }
-    }
-    
-    function showResumeUploadDialog(fileName, lastChunkIndex, totalChunks, fileId) {
-      // Calculate progress percentage
-      const progress = Math.round((lastChunkIndex / totalChunks) * 100);
-      
-      // Show toast with resume option
+    // Toast
+    function showToast(msg, type='info', duration=4000) {
       const toast = document.getElementById('toast');
-      const toastMessage = document.getElementById('toastMessage');
       const icon = toast.querySelector('i');
-      
-      icon.className = 'fas fa-exclamation-circle';
-      toast.className = toast.className.replace("show", "");
-      
-      // Create resume button inside toast
-      toastMessage.innerHTML = `<div>Unfinished upload found: ${fileName} (${progress}% complete)</div>
-        <button id="resumeButton" style="margin-top: 10px; padding: 5px 10px; background: white; color: var(--primary); border: none; border-radius: 4px; cursor: pointer;">
-          <i class="fas fa-play-circle"></i> Resume Upload
-        </button>
-        <button id="discardButton" style="margin-top: 10px; margin-left: 10px; padding: 5px 10px; background: rgba(255,255,255,0.3); color: white; border: none; border-radius: 4px; cursor: pointer;">
-          <i class="fas fa-times-circle"></i> Discard
-        </button>`;
-      
-      // Keep toast open longer
-      setTimeout(function() {
-        if (toast.className.includes('show')) {
-          toast.className = toast.className.replace("show", "");
-        }
-      }, 15000); // 15 seconds
-      
-      // Add event listeners
-      document.getElementById('resumeButton').addEventListener('click', function() {
-        toast.className = toast.className.replace("show", "");
-        promptForFileToResume(fileName, lastChunkIndex, totalChunks, fileId);
-      });
-      
-      document.getElementById('discardButton').addEventListener('click', function() {
-        toast.className = toast.className.replace("show", "");
-        clearUnfinishedUploadData();
-      });
-    }
-    
-    function promptForFileToResume(fileName, lastChunkIndex, totalChunks, fileId) {
-      // Create a temporary file input to select the same file again
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.style.display = 'none';
-      document.body.appendChild(input);
-      
-      input.onchange = function() {
-        if (input.files.length > 0) {
-          const file = input.files[0];
-          
-          // Check if it's the same file by name and size (approximate check)
-          if (file.name === fileName) {
-            // Set the file in our main input
-            document.getElementById('fileInput').files = input.files;
-            updateFileInfo();
-            
-            // Resume upload from last chunk
-            resumeUpload(file, lastChunkIndex, totalChunks, fileId);
-          } else {
-            showToast(`Selected file "${file.name}" doesn't match the unfinished upload "${fileName}"`, 'error');
-          }
-        }
-        
-        // Remove temporary input
-        document.body.removeChild(input);
-      };
-      
-      // Trigger file selection
-      input.click();
-    }
-    
-    function resumeUpload(file, lastChunkIndex, totalChunks, fileId) {
-      // Calculate optimal chunk size based on file size
-      let optimalChunkSize = 5 * 1024 * 1024; // Default 5MB
-      if (file.size < 10 * 1024 * 1024) { // Less than 10MB
-        optimalChunkSize = 1 * 1024 * 1024; // Use 1MB chunks
-      } else if (file.size > 1024 * 1024 * 1024) { // More than 1GB
-        optimalChunkSize = 10 * 1024 * 1024; // Use 10MB chunks
-      }
-      
-      // Reset state
-      currentChunk = parseInt(lastChunkIndex);
-      totalChunks = parseInt(totalChunks);
-      chunkUploadAborted = false;
-      isUploading = true;
-      isThrottled = document.hidden;
-      lastProgressTime = 0;
-      lastChunkBytes = 0;
-      retryCount = 0;
-      retryDelay = 1000;
-      uploadSpeeds = [];
-      
-      // Show upload in progress
-      updateUploadButtonState(true);
-      
-      // Initialize progress display
-      document.querySelector('.progress-container').style.display = 'block';
-      document.querySelector('.progress-bar').style.width = `${Math.round((currentChunk / totalChunks) * 100)}%`;
-      document.getElementById('uploadInfo').innerHTML = 
-        `<i class="fas fa-info-circle"></i> Resuming upload from ${Math.round((currentChunk / totalChunks) * 100)}%...`;
-      
-      showToast(`Resuming upload of ${file.name} from ${Math.round((currentChunk / totalChunks) * 100)}%...`, 'info');
-      
-      // Resume upload
-      uploadChunk(file, fileId);
-    }
-    
-    function clearUnfinishedUploadData() {
-      try {
-        localStorage.removeItem('lastUploadFileId');
-        localStorage.removeItem('lastUploadFileName');
-        localStorage.removeItem('lastUploadTime');
-        localStorage.removeItem('lastChunkIndex');
-        localStorage.removeItem('totalChunks');
-      } catch (error) {
-        console.warn('Error clearing unfinished upload data:', error);
-      }
+      const text = document.getElementById('toastMsg');
+      text.textContent = msg;
+      toast.className = ''; // reset
+      if (type==='success') icon.className = 'fas fa-check-circle';
+      else if (type==='error') icon.className = 'fas fa-times-circle';
+      else icon.className = 'fas fa-info-circle';
+
+      toast.classList.add(type);
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, duration);
     }
 
-    // Function to report errors to the server
-    function reportErrorToServer(error) {
-      if (!uploadedFileId) return;
-      
-      const params = new URLSearchParams({
-        fileId: uploadedFileId,
-        code: error.code || 'CLIENT_ERROR',
-        message: error.message || 'Unknown client error',
-        chunkIndex: currentChunk
-      });
-      
-      fetch(`/report-upload-error?${params.toString()}`)
-        .catch(err => {
-          console.error('Failed to report error to server:', err);
-        });
-    }
-    
-    // Detect browser closing/refreshing to handle abrupt termination
-    window.addEventListener('beforeunload', function(event) {
-      if (isUploading) {
-        // Report that the client is closing during upload
-        reportErrorToServer({
-          code: 'CLIENT_CLOSED',
-          message: 'Browser closed or refreshed during upload'
-        });
-        
-        // Ask user to confirm if they want to leave
-        event.preventDefault();
-        event.returnValue = 'Upload in progress. Are you sure you want to leave?';
-        return event.returnValue;
-      }
-    });
-
-    // Set up event listeners
-    document.addEventListener('DOMContentLoaded', function() {
-      // Listen for file input changes
-      document.getElementById('fileInput').addEventListener('change', function(e) {
-        console.log('File input change event fired', e.target.files);
-        updateFileInfo(this);
-      });
-      
-      // Run a small speed test to determine initial network speed
-      if (navigator.onLine) {
-        runSpeedTest();
-      }
-      
-      // Add debug message
-      console.log('File upload system initialized and ready');
-    });
-
-    // Format bytes to human-readable size
     function formatSize(bytes) {
-      if (bytes === 0) return '0 B';
-      const k = 1024;
-      const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-      const i = Math.floor(Math.log(bytes) / Math.log(k));
-      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+      if (bytes===0) return '0 B';
+      const sizes = ['B','KB','MB','GB','TB'];
+      const i = Math.floor(Math.log(bytes)/Math.log(1024));
+      return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
+    }
+
+    function showHelp() {
+      alert('1) Navigate to folder.\n2) Select folder.\n3) Choose file.\n4) Click upload.\nLarge files use multi-chunk to avoid corruption.');
     }
   </script>
 </body>
