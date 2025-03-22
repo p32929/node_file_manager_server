@@ -345,7 +345,7 @@
     .modal {
       display: none;
       position: fixed;
-      z-index: 1000;
+      z-index: 9999;
       left: 0;
       top: 0;
       width: 100%;
@@ -353,8 +353,19 @@
       background-color: rgba(0,0,0,0.4);
       animation: fadeIn 0.3s;
       overflow: hidden;
+      display: flex;
       justify-content: center;
       align-items: center;
+    }
+    
+    /* Hide modal by default */
+    .modal {
+      display: none;
+    }
+    
+    /* Show modal when needed */
+    .modal.show {
+      display: flex;
     }
 
     @keyframes fadeIn {
@@ -778,6 +789,21 @@
             <li>The breadcrumb navigation allows quick jumps between folders</li>
           </ul>
         </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Upload Progress Modal -->
+  <div id="uploadProgressModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2><i class="fas fa-cloud-upload-alt"></i> Uploading File</h2>
+      </div>
+      <div class="modal-body">
+        <div class="progress-container">
+          <div id="modalProgressBar" class="progress-bar"></div>
+        </div>
+        <div id="modalUploadInfo" class="upload-info-container"></div>
       </div>
     </div>
   </div>
@@ -1334,6 +1360,9 @@
         return;
       }
 
+      // Show the upload progress modal
+      document.getElementById('uploadProgressModal').classList.add('show');
+      
       // Adaptive initial chunk size
       optimalChunkSize = determineInitialChunkSize(file.size);
       
@@ -1922,6 +1951,9 @@
                 isUploading = false;
                 showToast(`Upload of ${file.name} completed successfully!`, 'success');
                 
+                // Hide the upload progress modal
+                document.getElementById('uploadProgressModal').classList.remove('show');
+                
                 // Update info with completion message in single-line format
                 document.getElementById('uploadInfo').innerHTML = 
                   `<i class="fas fa-check-circle"></i> <span class="inline-status">Upload complete</span><span class="status-divider">|</span><span class="inline-status">${formatSize(file.size)} uploaded</span>`;
@@ -2046,17 +2078,21 @@
         // Reset progress bar when not uploading
         document.querySelector('.progress-bar').style.width = '0%';
         document.getElementById('uploadInfo').textContent = '';
+        // Hide the modal if it's showing
+        document.getElementById('uploadProgressModal').classList.remove('show');
         updateUploadButtonState(false);
         return;
       }
       
       const progressBar = document.querySelector('.progress-bar');
+      const modalProgressBar = document.getElementById('modalProgressBar');
       const file = document.getElementById('fileInput').files[0];
       if (!file || !progressBar) return;
       
       // Calculate percentage
       const percent = Math.min(100, Math.round((uploadedBytes / file.size) * 100));
       progressBar.style.width = percent + '%';
+      if (modalProgressBar) modalProgressBar.style.width = percent + '%';
       
       // Calculate speed (use 0 if no speeds recorded)
       let avgSpeed = 0;
@@ -2077,8 +2113,8 @@
       const etaText = formatTime(eta);
       const progressText = `${formatSize(uploadedBytes)} of ${formatSize(file.size)}`;
       
-      // Create a consistent status display with all information
-      document.getElementById('uploadInfo').innerHTML = `
+      // Create the status HTML
+      const statusHTML = `
         <div class="upload-status">
           <div class="status-item">
             <i class="fas fa-upload"></i> Progress: <strong>${percent}%</strong> (${progressText})
@@ -2094,6 +2130,10 @@
           </div>
         </div>
       `;
+      
+      // Update both the page and the modal with the same information
+      document.getElementById('uploadInfo').innerHTML = statusHTML;
+      document.getElementById('modalUploadInfo').innerHTML = statusHTML;
     }
     
     // Format time in seconds to a human-readable string
