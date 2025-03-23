@@ -136,7 +136,17 @@
           <div class="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
             <div id="uploadProgressBar" class="h-full w-0 bg-green-500 transition-all duration-300"></div>
           </div>
+          <div id="uploadSpeed" class="text-sm text-gray-600 mt-2"></div>
           <div id="uploadStatus" class="text-sm text-gray-600 mt-2"></div>
+          
+          <!-- Cancel button -->
+          <button 
+            id="cancelUploadBtn" 
+            onclick="cancelUpload()" 
+            class="mt-4 bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg flex items-center gap-2 transition-colors hidden">
+            <i class="fas fa-times"></i>
+            <span>Cancel Upload</span>
+          </button>
         </div>
       </div>
     </div>
@@ -152,6 +162,10 @@
     const API_BASE = window.location.origin;
     let currentPath = '/';
     let historyStack = [];
+    let isUploading = false; // Track upload state
+    let cancelUploadRequested = false; // Track cancel request
+    let uploadStartTime = 0; // For speed calculation
+    let currentXhr = null; // Store the current XHR request
 
     window.addEventListener('load', () => {
       loadFolders('/');
@@ -313,6 +327,91 @@
       document.getElementById('uploadCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
+    // Set UI state during upload
+    function setUploadingState(uploading) {
+      isUploading = uploading;
+      
+      // Disable or enable explorer card
+      const explorerCard = document.getElementById('explorerCard');
+      if (uploading) {
+        explorerCard.classList.add('opacity-50', 'pointer-events-none');
+      } else {
+        explorerCard.classList.remove('opacity-50', 'pointer-events-none');
+      }
+      
+      // Show/hide cancel button and disable upload button
+      const startUploadBtn = document.getElementById('startUploadBtn');
+      const cancelUploadBtn = document.getElementById('cancelUploadBtn');
+      
+      if (uploading) {
+        startUploadBtn.disabled = true;
+        startUploadBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        cancelUploadBtn.classList.remove('hidden');
+      } else {
+        startUploadBtn.disabled = false;
+        startUploadBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        cancelUploadBtn.classList.add('hidden');
+        
+        // Reset cancel flag
+        cancelUploadRequested = false;
+      }
+      
+      // Disable drop zone
+      const dropZone = document.getElementById('dropZone');
+      if (uploading) {
+        dropZone.classList.add('opacity-50', 'pointer-events-none');
+      } else {
+        dropZone.classList.remove('opacity-50', 'pointer-events-none');
+      }
+    }
+    
+    // Cancel ongoing upload
+    function cancelUpload() {
+      if (!isUploading) return;
+      
+      cancelUploadRequested = true;
+      
+      if (currentXhr) {
+        currentXhr.abort();
+      }
+      
+      document.getElementById('uploadStatus').textContent = 'Cancelling upload...';
+      
+      // Send request to server to delete temporary files
+      const fileName = selectedFile ? selectedFile.name : '';
+      fetch(`/cancel-upload?fileId=${fileId}&fileName=${encodeURIComponent(fileName)}`, {
+        method: 'POST'
+      })
+      .then(response => response.json())
+      .then(data => {
+        setUploadingState(false);
+        document.getElementById('uploadStatus').textContent = 'Upload cancelled';
+        document.getElementById('uploadStatus').className = 'text-sm text-yellow-500 mt-2';
+        showToast('Upload cancelled', 'info');
+      })
+      .catch(error => {
+        console.error('Error cancelling upload:', error);
+        setUploadingState(false);
+      });
+    }
+    
+    // Calculate and format upload speed
+    function calculateSpeed(bytesUploaded, elapsedMs) {
+      if (elapsedMs === 0) return 'N/A';
+      
+      const bytesPerSecond = (bytesUploaded / elapsedMs) * 1000;
+      
+      if (bytesPerSecond < 1024) {
+        return bytesPerSecond.toFixed(1) + ' B/s';
+      } else if (bytesPerSecond < 1024 * 1024) {
+        return (bytesPerSecond / 1024).toFixed(1) + ' KB/s';
+      } else if (bytesPerSecond < 1024 * 1024 * 1024) {
+        return (bytesPerSecond / (1024 * 1024)).toFixed(1) + ' MB/s';
+      } else {
+        return (bytesPerSecond / (1024 * 1024 * 1024)).toFixed(1) + ' GB/s';
+      }
+    }
+
     // File selection + upload
     let selectedFile = null;
     function onFileSelected() {
@@ -340,11 +439,22 @@
         return;
       }
       
+      if (isUploading) {
+        showToast('Upload already in progress', 'info');
+        return;
+      }
+      
       const folder = currentPath;
       if (!folder) {
         showToast('No target folder', 'error');
         return;
       }
+
+      // Set upload start time for speed calculation
+      uploadStartTime = Date.now();
+      
+      // Set uploading state
+      setUploadingState(true);
 
       // Decide single-chunk vs multi-chunk
       const MAX_SINGLE_CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
@@ -362,9 +472,12 @@
       document.getElementById('uploadProgress').style.display = 'block';
       document.getElementById('uploadProgressBar').style.width = '0%';
       document.getElementById('uploadPercent').textContent = '0%';
+      document.getElementById('uploadSpeed').textContent = 'Calculating...';
       document.getElementById('uploadStatus').textContent = 'Uploading...';
 
       const xhr = new XMLHttpRequest();
+      currentXhr = xhr; // Store reference for cancellation
+      
       xhr.open('POST', `/upload-chunk?path=${encodeURIComponent(folder)}`, true);
       xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
       xhr.setRequestHeader('X-Chunk-Index', '0');
@@ -376,10 +489,39 @@
           const pct = Math.floor((e.loaded / e.total) * 100);
           document.getElementById('uploadProgressBar').style.width = pct + '%';
           document.getElementById('uploadPercent').textContent = pct + '%';
+          
+          // Calculate and display speed
+          const elapsedMs = Date.now() - uploadStartTime;
+          const speed = calculateSpeed(e.loaded, elapsedMs);
+          document.getElementById('uploadSpeed').textContent = speed;
+          
+          const remainingBytes = e.total - e.loaded;
+          if (e.loaded > 0 && elapsedMs > 1000) {
+            const bytesPerMs = e.loaded / elapsedMs;
+            const remainingTimeMs = bytesPerMs > 0 ? remainingBytes / bytesPerMs : 0;
+            const remainingTimeSec = Math.ceil(remainingTimeMs / 1000);
+            
+            if (remainingTimeSec > 0) {
+              let timeDisplay = '';
+              if (remainingTimeSec > 60) {
+                const mins = Math.floor(remainingTimeSec / 60);
+                const secs = remainingTimeSec % 60;
+                timeDisplay = `${mins}m ${secs}s remaining`;
+              } else {
+                timeDisplay = `${remainingTimeSec}s remaining`;
+              }
+              
+              document.getElementById('uploadStatus').textContent = `Uploading... ${timeDisplay}`;
+            }
+          }
         }
       };
       
       xhr.onload = () => {
+        if (cancelUploadRequested) {
+          return; // Don't continue if cancellation was requested
+        }
+        
         if (xhr.status === 200) {
           try {
             const resp = JSON.parse(xhr.responseText);
@@ -388,28 +530,46 @@
               document.getElementById('uploadPercent').textContent = '100%';
               document.getElementById('uploadStatus').textContent = 'Upload complete!';
               document.getElementById('uploadStatus').className = 'text-sm text-green-600 mt-2 font-medium';
+              
+              // Final speed calculation
+              const elapsedMs = Date.now() - uploadStartTime;
+              const speed = calculateSpeed(file.size, elapsedMs);
+              document.getElementById('uploadSpeed').textContent = `Average: ${speed}`;
+              
               showToast('Upload complete!', 'success');
+              setUploadingState(false);
             } else {
               showToast(resp.error || 'Server error', 'error');
               document.getElementById('uploadStatus').textContent = resp.error || 'Server error';
               document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
+              setUploadingState(false);
             }
           } catch {
             showToast('Invalid response from server', 'error');
             document.getElementById('uploadStatus').textContent = 'Invalid response from server';
             document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
+            setUploadingState(false);
           }
         } else {
           showToast(`Error: ${xhr.status}`, 'error');
           document.getElementById('uploadStatus').textContent = `Error: ${xhr.status}`;
           document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
+          setUploadingState(false);
         }
       };
       
       xhr.onerror = () => {
-        showToast('Network error', 'error');
-        document.getElementById('uploadStatus').textContent = 'Network error';
-        document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
+        if (!cancelUploadRequested) {
+          showToast('Network error', 'error');
+          document.getElementById('uploadStatus').textContent = 'Network error';
+          document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
+          setUploadingState(false);
+        }
+      };
+      
+      xhr.onabort = () => {
+        document.getElementById('uploadStatus').textContent = 'Upload aborted';
+        document.getElementById('uploadStatus').className = 'text-sm text-yellow-500 mt-2';
       };
 
       xhr.send(file);
@@ -420,6 +580,7 @@
     let currentChunkIndex = 0;
     let totalChunks = 0;
     let fileId = null;
+    let totalBytesUploaded = 0;
 
     function uploadMultiChunk(file, folder) {
       // Setup UI
@@ -427,6 +588,7 @@
       document.getElementById('uploadProgress').style.display = 'block';
       document.getElementById('uploadProgressBar').style.width = '0%';
       document.getElementById('uploadPercent').textContent = '0%';
+      document.getElementById('uploadSpeed').textContent = 'Calculating...';
       document.getElementById('uploadStatus').textContent = 'Preparing...';
 
       // Setup state
@@ -434,15 +596,21 @@
       totalChunks = Math.ceil(file.size / chunkSize);
       currentChunkIndex = 0;
       fileId = Date.now().toString(); // or any unique ID
+      totalBytesUploaded = 0;
 
       // Start
       uploadNextChunk(file, folder);
     }
 
     function uploadNextChunk(file, folder) {
+      if (cancelUploadRequested) {
+        return; // Don't continue if cancellation was requested
+      }
+      
       if (currentChunkIndex >= totalChunks) {
         // done
         showToast('All chunks sent!', 'info');
+        setUploadingState(false);
         return;
       }
       
@@ -451,6 +619,8 @@
       const blob = file.slice(start, end);
 
       const xhr = new XMLHttpRequest();
+      currentXhr = xhr; // Store reference for cancellation
+      
       xhr.open('POST', `/upload-chunk?path=${encodeURIComponent(folder)}`, true);
       xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
       xhr.setRequestHeader('X-Chunk-Index', currentChunkIndex);
@@ -461,16 +631,48 @@
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
           const chunkPercent = e.loaded / e.total;
-          const overallBytes = (currentChunkIndex * chunkSize) + e.loaded;
+          const currentChunkUploaded = e.loaded;
+          const overallBytes = totalBytesUploaded + currentChunkUploaded;
           const overallPercent = Math.floor((overallBytes / file.size) * 100);
+          
           document.getElementById('uploadProgressBar').style.width = overallPercent + '%';
           document.getElementById('uploadPercent').textContent = overallPercent + '%';
-          document.getElementById('uploadStatus').textContent = 
-            `Uploading chunk ${currentChunkIndex+1} of ${totalChunks} - ${overallPercent}% overall`;
+          
+          // Calculate and display speed
+          const elapsedMs = Date.now() - uploadStartTime;
+          const speed = calculateSpeed(overallBytes, elapsedMs);
+          document.getElementById('uploadSpeed').textContent = speed;
+          
+          // Estimate remaining time
+          if (overallBytes > 0 && elapsedMs > 1000) {
+            const bytesPerMs = overallBytes / elapsedMs;
+            const remainingBytes = file.size - overallBytes;
+            const remainingTimeMs = bytesPerMs > 0 ? remainingBytes / bytesPerMs : 0;
+            const remainingTimeSec = Math.ceil(remainingTimeMs / 1000);
+            
+            let timeDisplay = '';
+            if (remainingTimeSec > 60) {
+              const mins = Math.floor(remainingTimeSec / 60);
+              const secs = remainingTimeSec % 60;
+              timeDisplay = `${mins}m ${secs}s remaining`;
+            } else {
+              timeDisplay = `${remainingTimeSec}s remaining`;
+            }
+            
+            document.getElementById('uploadStatus').textContent = 
+              `Uploading chunk ${currentChunkIndex+1} of ${totalChunks} - ${overallPercent}% overall - ${timeDisplay}`;
+          } else {
+            document.getElementById('uploadStatus').textContent = 
+              `Uploading chunk ${currentChunkIndex+1} of ${totalChunks} - ${overallPercent}% overall`;
+          }
         }
       };
 
       xhr.onload = () => {
+        if (cancelUploadRequested) {
+          return; // Don't continue if cancellation was requested
+        }
+        
         if (xhr.status === 200) {
           try {
             const resp = JSON.parse(xhr.responseText);
@@ -478,8 +680,12 @@
               showToast(resp.error || 'Server error uploading chunk', 'error');
               document.getElementById('uploadStatus').textContent = resp.error || 'Server error uploading chunk';
               document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
+              setUploadingState(false);
               return;
             }
+            
+            // Add current chunk size to total bytes uploaded
+            totalBytesUploaded += blob.size;
             
             // success
             if (currentChunkIndex === totalChunks - 1) {
@@ -488,7 +694,14 @@
               document.getElementById('uploadPercent').textContent = '100%';
               document.getElementById('uploadStatus').textContent = 'Upload complete!';
               document.getElementById('uploadStatus').className = 'text-sm text-green-600 mt-2 font-medium';
+              
+              // Final speed calculation
+              const elapsedMs = Date.now() - uploadStartTime;
+              const speed = calculateSpeed(file.size, elapsedMs);
+              document.getElementById('uploadSpeed').textContent = `Average: ${speed}`;
+              
               showToast('Upload complete!', 'success');
+              setUploadingState(false);
             } else {
               currentChunkIndex++;
               uploadNextChunk(file, folder);
@@ -497,18 +710,28 @@
             showToast('Invalid JSON response from server', 'error');
             document.getElementById('uploadStatus').textContent = 'Invalid JSON response from server';
             document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
+            setUploadingState(false);
           }
         } else {
           showToast(`Error uploading chunk ${currentChunkIndex}`, 'error');
           document.getElementById('uploadStatus').textContent = `Error uploading chunk ${currentChunkIndex}`;
           document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
+          setUploadingState(false);
         }
       };
       
       xhr.onerror = () => {
-        showToast(`Network error uploading chunk ${currentChunkIndex}`, 'error');
-        document.getElementById('uploadStatus').textContent = `Network error uploading chunk ${currentChunkIndex}`;
-        document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
+        if (!cancelUploadRequested) {
+          showToast(`Network error uploading chunk ${currentChunkIndex}`, 'error');
+          document.getElementById('uploadStatus').textContent = `Network error uploading chunk ${currentChunkIndex}`;
+          document.getElementById('uploadStatus').className = 'text-sm text-red-500 mt-2';
+          setUploadingState(false);
+        }
+      };
+      
+      xhr.onabort = () => {
+        document.getElementById('uploadStatus').textContent = 'Upload aborted';
+        document.getElementById('uploadStatus').className = 'text-sm text-yellow-500 mt-2';
       };
       
       xhr.send(blob);
