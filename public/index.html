@@ -150,6 +150,49 @@
         </div>
       </div>
     </div>
+
+    <!-- Files card -->
+    <div id="filesCard" class="bg-white rounded-xl shadow-sm border border-gray-100 mb-6 overflow-hidden">
+      <div class="bg-gray-50 px-4 py-3 border-b border-gray-100 flex justify-between items-center">
+        <h2 class="text-lg font-medium text-gray-800">Files</h2>
+        <div class="flex gap-2">
+          <button id="downloadSelectedBtn" onclick="downloadSelected()" disabled 
+            class="bg-primary text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors opacity-50 cursor-not-allowed text-sm">
+            <i class="fas fa-download text-xs"></i>
+            <span>Download Selected</span>
+          </button>
+          <button onclick="refreshFiles()" class="text-gray-500 hover:text-gray-700 bg-white border border-gray-200 px-3 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-1.5">
+            <i class="fas fa-sync-alt text-xs"></i>
+            <span>Refresh</span>
+          </button>
+        </div>
+      </div>
+      
+      <div class="p-4 md:p-5">
+        <!-- Selected path and stats -->
+        <div class="flex flex-wrap justify-between items-center mb-4 px-3 py-2 bg-gray-50 rounded-md text-sm">
+          <div>
+            <span class="text-gray-500">Current folder:</span> 
+            <span id="fileListPath" class="text-gray-900 font-medium ml-1"></span>
+          </div>
+          <div id="fileStats" class="text-gray-500 mt-1 md:mt-0">
+            <span id="fileCount">0 files</span>
+            <span class="mx-1">•</span>
+            <span id="totalSize">0 bytes</span>
+          </div>
+        </div>
+        
+        <!-- Files listing -->
+        <div id="fileContainer" class="min-h-[200px] border border-gray-100 rounded-lg p-4 bg-gray-50/50">
+          <div class="flex items-center justify-center h-[200px] text-gray-500">
+            <div class="flex items-center gap-2">
+              <i class="fas fa-spinner fa-spin text-primary"></i>
+              <span>Loading files...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </main>
 
   <!-- Toast notifications -->
@@ -166,9 +209,12 @@
     let cancelUploadRequested = false; // Track cancel request
     let uploadStartTime = 0; // For speed calculation
     let currentXhr = null; // Store the current XHR request
+    let selectedFiles = new Set(); // Track selected files for download
 
     window.addEventListener('load', () => {
       loadFolders('/');
+      // Also load files in the current directory
+      loadFiles('/');
     });
 
     function loadFolders(dir, pushHistory=true) {
@@ -194,6 +240,10 @@
           }
           
           currentPath = data.path;
+          
+          // Update file list for the new path
+          document.getElementById('fileListPath').textContent = currentPath;
+          loadFiles(currentPath);
           
           if (data.isRoot) {
             // On Windows root, fetch drives
@@ -316,6 +366,7 @@
     function selectCurrentFolder() {
       document.getElementById('uploadCard').style.display = 'block';
       document.getElementById('selectedFolderPath').textContent = currentPath;
+      document.getElementById('fileListPath').textContent = currentPath;
       showToast('Folder selected: ' + currentPath, 'info');
       // Reset upload UI
       document.getElementById('fileInfo').innerHTML = '';
@@ -842,6 +893,368 @@
           document.body.removeChild(modal);
         }, 300);
       });
+    }
+
+    // Load files in the selected folder
+    function loadFiles(folderPath) {
+      const container = document.getElementById('fileContainer');
+      container.innerHTML = `
+        <div class="flex items-center justify-center h-[200px] text-gray-500">
+          <div class="flex items-center gap-2">
+            <i class="fas fa-spinner fa-spin text-primary"></i>
+            <span>Loading files...</span>
+          </div>
+        </div>`;
+
+      fetch(`/list-files?path=${encodeURIComponent(folderPath)}`)
+        .then(r => r.json())
+        .then(data => {
+          if (!data.success) {
+            container.innerHTML = `<div class="text-red-500 p-4">Error: ${data.error || 'Failed to load files'}</div>`;
+            return;
+          }
+
+          if (!data.files || data.files.length === 0) {
+            container.innerHTML = `
+              <div class="flex flex-col items-center justify-center h-[200px] text-gray-500">
+                <i class="fas fa-file-alt text-gray-300 text-4xl mb-2"></i>
+                <span>No files in this folder</span>
+              </div>`;
+            
+            // Update stats
+            document.getElementById('fileCount').textContent = '0 files';
+            document.getElementById('totalSize').textContent = '0 bytes';
+            return;
+          }
+
+          // Calculate total size and update stats
+          let totalSize = 0;
+          data.files.forEach(file => {
+            totalSize += file.size || 0;
+          });
+          
+          document.getElementById('fileCount').textContent = `${data.files.length} file${data.files.length !== 1 ? 's' : ''}`;
+          document.getElementById('totalSize').textContent = formatSize(totalSize);
+
+          // Clear selected files
+          selectedFiles.clear();
+          updateDownloadButton();
+
+          // Create grid view for files
+          container.innerHTML = `
+            <div class="flex justify-between items-center border-b border-gray-100 pb-3 mb-3">
+              <div class="flex items-center gap-2">
+                <input type="checkbox" id="selectAllFiles" class="rounded border-gray-300" onchange="toggleSelectAll(this.checked)">
+                <label for="selectAllFiles" class="text-sm text-gray-700 cursor-pointer">Select All</label>
+              </div>
+              <div class="text-xs text-gray-500">
+                <button onclick="toggleViewMode()" class="p-1 rounded-md hover:bg-gray-100 flex items-center gap-1">
+                  <i id="viewModeIcon" class="fas fa-th-large"></i>
+                  <span id="viewModeText">Grid View</span>
+                </button>
+              </div>
+            </div>
+            <div id="fileGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3"></div>
+            <div id="fileList" class="hidden"></div>
+          `;
+          
+          const fileGrid = document.getElementById('fileGrid');
+          const fileList = document.getElementById('fileList');
+          
+          // Populate grid view
+          data.files.forEach((file, idx) => {
+            const fileCard = document.createElement('div');
+            fileCard.className = 'bg-white border border-gray-200 rounded-lg p-3 hover:shadow-sm transition-all';
+            
+            const icon = getFileIcon(file.type, file.extension);
+            
+            fileCard.innerHTML = `
+              <div class="flex items-start">
+                <div class="flex-shrink-0 p-2 rounded-lg ${getColorForFileType(file.type)} mb-2 mr-2">
+                  <i class="${icon} text-white"></i>
+                </div>
+                <div class="flex-grow min-w-0">
+                  <div class="flex items-start justify-between">
+                    <div class="truncate max-w-[140px]" title="${file.name}">
+                      <span class="font-medium text-gray-700">${file.name}</span>
+                    </div>
+                    <div class="ml-2 flex-shrink-0">
+                      <input type="checkbox" id="file_grid_${idx}" data-file="${encodeURIComponent(folderPath + '/' + file.name)}" 
+                        class="file-checkbox rounded border-gray-300" onchange="toggleFileSelection(this)">
+                    </div>
+                  </div>
+                  <div class="text-xs text-gray-500 mt-1">${formatSize(file.size)}</div>
+                  <div class="flex items-center justify-between mt-2">
+                    <span class="text-xs text-gray-400">${formatDate(file.modified)}</span>
+                    <button onclick="downloadSingleFile('${encodeURIComponent(folderPath + '/' + file.name)}')" 
+                      class="bg-primary hover:bg-primary-dark text-white p-1 rounded-md transition-colors">
+                      <i class="fas fa-download text-xs"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            `;
+            
+            fileGrid.appendChild(fileCard);
+          });
+          
+          // Populate list view (hidden by default)
+          fileList.innerHTML = `
+            <table class="w-full">
+              <thead>
+                <tr class="bg-gray-50 text-left text-gray-500 text-xs">
+                  <th class="px-3 py-2 w-8"></th>
+                  <th class="px-3 py-2">Name</th>
+                  <th class="px-3 py-2 w-28">Size</th>
+                  <th class="px-3 py-2 w-40">Modified</th>
+                  <th class="px-3 py-2 w-20"></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${data.files.map((file, idx) => `
+                  <tr class="${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'} border-t border-gray-100 hover:bg-blue-50/30">
+                    <td class="px-3 py-2 w-8">
+                      <input type="checkbox" id="file_list_${idx}" data-file="${encodeURIComponent(folderPath + '/' + file.name)}" 
+                        class="file-checkbox rounded border-gray-300" onchange="toggleFileSelection(this)">
+                    </td>
+                    <td class="px-3 py-2 truncate max-w-xs">
+                      <div class="flex items-center gap-2">
+                        <i class="${getFileIcon(file.type, file.extension)} ${getTextColorForFileType(file.type)}"></i>
+                        <span class="truncate">${file.name}</span>
+                      </div>
+                    </td>
+                    <td class="px-3 py-2 text-gray-500 text-sm">${formatSize(file.size)}</td>
+                    <td class="px-3 py-2 text-gray-500 text-sm">${formatDate(file.modified)}</td>
+                    <td class="px-3 py-2">
+                      <button onclick="downloadSingleFile('${encodeURIComponent(folderPath + '/' + file.name)}')" 
+                        class="bg-primary hover:bg-primary-dark text-white p-1.5 rounded transition-colors">
+                        <i class="fas fa-download"></i>
+                      </button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `;
+          
+          // Sync checkboxes between grid and list views
+          syncCheckboxes();
+        })
+        .catch(err => {
+          container.innerHTML = `<div class="text-red-500 p-4">Failed to load files: ${err}</div>`;
+        });
+    }
+
+    // Toggle between grid and list view
+    let currentView = 'grid'; // Default view
+    function toggleViewMode() {
+      const gridView = document.getElementById('fileGrid');
+      const listView = document.getElementById('fileList');
+      const icon = document.getElementById('viewModeIcon');
+      const text = document.getElementById('viewModeText');
+      
+      if (currentView === 'grid') {
+        gridView.classList.add('hidden');
+        listView.classList.remove('hidden');
+        icon.className = 'fas fa-list';
+        text.textContent = 'List View';
+        currentView = 'list';
+      } else {
+        gridView.classList.remove('hidden');
+        listView.classList.add('hidden');
+        icon.className = 'fas fa-th-large';
+        text.textContent = 'Grid View';
+        currentView = 'grid';
+      }
+      
+      // Make sure all checkboxes are in sync
+      syncCheckboxes();
+    }
+
+    // Function to sync checkbox states between grid and list views
+    function syncCheckboxes() {
+      // Get all file paths that should be checked
+      const checkedPaths = Array.from(selectedFiles);
+      
+      // Uncheck all boxes first
+      document.querySelectorAll('.file-checkbox').forEach(cb => {
+        cb.checked = checkedPaths.includes(cb.dataset.file);
+      });
+      
+      // Check the "select all" box if all files are selected
+      const selectAllCheckbox = document.getElementById('selectAllFiles');
+      const totalCheckboxes = document.querySelectorAll('.file-checkbox').length;
+      selectAllCheckbox.checked = (totalCheckboxes > 0 && selectedFiles.size === totalCheckboxes);
+    }
+
+    // Get appropriate icon for file type
+    function getFileIcon(type, extension) {
+      switch (type) {
+        case 'image':
+          return 'fas fa-file-image';
+        case 'document':
+          if (extension === 'pdf') return 'fas fa-file-pdf';
+          if (['doc', 'docx'].includes(extension)) return 'fas fa-file-word';
+          if (['xls', 'xlsx', 'csv'].includes(extension)) return 'fas fa-file-excel';
+          if (['ppt', 'pptx'].includes(extension)) return 'fas fa-file-powerpoint';
+          return 'fas fa-file-alt';
+        case 'archive':
+          return 'fas fa-file-archive';
+        case 'audio':
+          return 'fas fa-file-audio';
+        case 'video':
+          return 'fas fa-file-video';
+        case 'code':
+          return 'fas fa-file-code';
+        default:
+          return 'fas fa-file';
+      }
+    }
+    
+    // Get background color for file type icon
+    function getColorForFileType(type) {
+      switch (type) {
+        case 'image':
+          return 'bg-purple-500';
+        case 'document':
+          return 'bg-blue-500';
+        case 'archive':
+          return 'bg-yellow-500';
+        case 'audio':
+          return 'bg-green-500';
+        case 'video':
+          return 'bg-red-500';
+        case 'code':
+          return 'bg-gray-700';
+        default:
+          return 'bg-gray-500';
+      }
+    }
+    
+    // Get text color for file type icon in list view
+    function getTextColorForFileType(type) {
+      switch (type) {
+        case 'image':
+          return 'text-purple-500';
+        case 'document':
+          return 'text-blue-500';
+        case 'archive':
+          return 'text-yellow-500';
+        case 'audio':
+          return 'text-green-500';
+        case 'video':
+          return 'text-red-500';
+        case 'code':
+          return 'text-gray-700';
+        default:
+          return 'text-gray-500';
+      }
+    }
+    
+    // Format date for display
+    function formatDate(dateString) {
+      if (!dateString) return '';
+      
+      const date = new Date(dateString);
+      const now = new Date();
+      const diff = now - date;
+      
+      // If today, show time
+      if (diff < 24 * 60 * 60 * 1000 && date.getDate() === now.getDate()) {
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+      
+      // If this year, show month and day
+      if (date.getFullYear() === now.getFullYear()) {
+        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      }
+      
+      // Otherwise show full date
+      return date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    // Toggle selection of all files
+    function toggleSelectAll(checked) {
+      const checkboxes = document.querySelectorAll('.file-checkbox');
+      checkboxes.forEach(cb => {
+        cb.checked = checked;
+        toggleFileSelection(cb, true); // Skip individual updates
+      });
+      updateDownloadButton();
+    }
+
+    // Toggle selection of a single file
+    function toggleFileSelection(checkbox, skipUpdate) {
+      const filePath = checkbox.dataset.file;
+      if (checkbox.checked) {
+        selectedFiles.add(filePath);
+      } else {
+        selectedFiles.delete(filePath);
+      }
+      
+      // Sync the corresponding checkbox in the other view
+      const isGridCheckbox = checkbox.id.startsWith('file_grid_');
+      const idx = checkbox.id.split('_').pop();
+      
+      if (isGridCheckbox) {
+        const listCheckbox = document.getElementById(`file_list_${idx}`);
+        if (listCheckbox) listCheckbox.checked = checkbox.checked;
+      } else {
+        const gridCheckbox = document.getElementById(`file_grid_${idx}`);
+        if (gridCheckbox) gridCheckbox.checked = checkbox.checked;
+      }
+      
+      if (!skipUpdate) {
+        updateDownloadButton();
+        
+        // Update "select all" checkbox
+        const selectAllCheckbox = document.getElementById('selectAllFiles');
+        const totalCheckboxes = document.querySelectorAll('.file-checkbox').length;
+        selectAllCheckbox.checked = (totalCheckboxes > 0 && selectedFiles.size === totalCheckboxes);
+      }
+    }
+
+    // Update the download button based on selection state
+    function updateDownloadButton() {
+      const downloadBtn = document.getElementById('downloadSelectedBtn');
+      if (selectedFiles.size > 0) {
+        downloadBtn.disabled = false;
+        downloadBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        downloadBtn.querySelector('span').textContent = `Download (${selectedFiles.size})`;
+      } else {
+        downloadBtn.disabled = true;
+        downloadBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        downloadBtn.querySelector('span').textContent = 'Download Selected';
+      }
+    }
+
+    // Download a single file
+    function downloadSingleFile(filePath) {
+      // Using a direct window.location approach for simple downloads
+      window.location.href = `/download?file=${filePath}`;
+    }
+
+    // Download multiple selected files
+    function downloadSelected() {
+      if (selectedFiles.size === 0) {
+        showToast('No files selected', 'error');
+        return;
+      }
+
+      if (selectedFiles.size === 1) {
+        // If only one file is selected, use the single file download
+        downloadSingleFile(Array.from(selectedFiles)[0]);
+        return;
+      }
+
+      // For multiple files, construct the URL with all selected files
+      const filesParam = Array.from(selectedFiles).join(',');
+      window.location.href = `/download-multiple?files=${filesParam}`;
+    }
+
+    // Refresh file list
+    function refreshFiles() {
+      loadFiles(currentPath);
     }
   </script>
 </body>

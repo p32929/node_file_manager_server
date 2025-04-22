@@ -15,6 +15,7 @@ const { parse } = require('url');
 const { exec } = require('child_process');
 const os = require('os');
 const crypto = require('crypto');
+const zlib = require('zlib');
 
 // Keep an in-memory map of ongoing uploads
 const uploadTracker = new Map();
@@ -507,10 +508,37 @@ const server = http.createServer(async (req, res) => {
           if (err) {
             return sendError(res, 500, 'Failed to read directory');
           }
-          const fileList = items.filter(f => {
-            const fp = path.join(fullPath, f);
-            return fs.statSync(fp).isFile();
-          });
+          const fileList = [];
+          
+          // Get detailed file info including size, type, and dates
+          for (const item of items) {
+            const filePath = path.join(fullPath, item);
+            try {
+              const stats = fs.statSync(filePath);
+              if (stats.isFile()) {
+                // Get file extension for type identification
+                const ext = path.extname(item).toLowerCase().substring(1);
+                
+                fileList.push({
+                  name: item,
+                  size: stats.size,
+                  modified: stats.mtime.toISOString(),
+                  created: stats.birthtime.toISOString(),
+                  extension: ext,
+                  type: getFileType(ext)
+                });
+              }
+            } catch (statErr) {
+              console.error(`Error getting stats for ${item}:`, statErr);
+              // Still include the file with limited info
+              fileList.push({ 
+                name: item, 
+                size: 0, 
+                error: 'Could not read file info' 
+              });
+            }
+          }
+          
           res.writeHead(200, { 'Content-Type':'application/json' });
           res.end(JSON.stringify({
             success: true,
@@ -527,7 +555,244 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------
-  // 10) Fallback: serve static from ./public
+  // 10) Download a single file
+  // -------------------------------------------
+  else if (req.method === 'GET' && pathname === '/download') {
+    try {
+      // Get the file path from the query
+      const filePath = query.file;
+      if (!filePath) {
+        return sendError(res, 400, 'Missing file path');
+      }
+
+      // Resolve the file path to prevent directory traversal
+      const fullPath = path.resolve(filePath);
+      
+      // Check if the file exists
+      if (!fs.existsSync(fullPath)) {
+        return sendError(res, 404, 'File not found');
+      }
+      
+      // Check if it's a file
+      const stats = fs.statSync(fullPath);
+      if (!stats.isFile()) {
+        return sendError(res, 400, 'Not a file');
+      }
+
+      // Get the file name
+      const fileName = path.basename(fullPath);
+      
+      // Set the content type based on the file extension
+      const ext = path.extname(fileName).toLowerCase();
+      let contentType = 'application/octet-stream'; // Default to binary
+      if (ext === '.pdf') contentType = 'application/pdf';
+      else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+      else if (ext === '.png') contentType = 'image/png';
+      else if (ext === '.txt') contentType = 'text/plain';
+      else if (ext === '.mp4') contentType = 'video/mp4';
+      else if (ext === '.mp3') contentType = 'audio/mpeg';
+      
+      // Set headers for the file download
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+      res.setHeader('Content-Length', stats.size);
+      
+      // Create a read stream and pipe it to the response
+      const fileStream = fs.createReadStream(fullPath);
+      
+      fileStream.on('error', (err) => {
+        console.error('Error streaming file:', err);
+        if (!res.headersSent) {
+          sendError(res, 500, `File streaming error: ${err.message}`);
+        }
+      });
+      
+      fileStream.pipe(res);
+    } catch (err) {
+      console.error('Download error:', err);
+      sendError(res, 500, `Server error: ${err.message}`);
+    }
+  }
+
+  // -------------------------------------------
+  // 11) Download multiple files as a zip archive
+  // -------------------------------------------
+  else if (req.method === 'GET' && pathname === '/download-multiple') {
+    try {
+      // Parse the files from the query parameter (comma-separated list)
+      const fileList = query.files ? query.files.split(',') : [];
+      
+      if (fileList.length === 0) {
+        return sendError(res, 400, 'No files specified');
+      }
+
+      // Prepare archive name
+      const timestamp = Date.now();
+      const archiveName = `download_${timestamp}.zip`;
+      
+      // For single file that's not too large, redirect to single file download
+      if (fileList.length === 1) {
+        const fullPath = path.resolve(fileList[0]);
+        if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+          res.writeHead(302, { 'Location': `/download?file=${encodeURIComponent(fileList[0])}` });
+          return res.end();
+        }
+      }
+
+      // Validate all files exist and gather file details
+      const fileDetails = [];
+      for (const filePath of fileList) {
+        const fullPath = path.resolve(filePath);
+        
+        if (!fs.existsSync(fullPath)) {
+          return sendError(res, 404, `File not found: ${path.basename(fullPath)}`);
+        }
+        
+        const stats = fs.statSync(fullPath);
+        if (!stats.isFile()) {
+          return sendError(res, 400, `Not a file: ${path.basename(fullPath)}`);
+        }
+        
+        fileDetails.push({
+          path: fullPath,
+          name: path.basename(fullPath),
+          size: stats.size
+        });
+      }
+      
+      // Set headers for the zip download
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${archiveName}"`);
+      
+      // Create temporary directory for creating the archive
+      const tmpDir = path.join(os.tmpdir(), `download_${timestamp}`);
+      if (!fs.existsSync(tmpDir)) {
+        fs.mkdirSync(tmpDir, { recursive: true });
+      }
+      
+      // Path for the temporary zip file
+      const zipFilePath = path.join(tmpDir, archiveName);
+      
+      // Create a ZIP file using the archiver module or similar approach
+      // Since we're not using third-party packages, we'll implement a simple ZIP creation
+      
+      // Using Node.js child_process to leverage system zip command if available
+      const platform = process.platform;
+      let zipCommand;
+      
+      if (platform === 'win32') {
+        // On Windows, check if PowerShell is available for ZIP creation
+        zipCommand = `powershell -command "Compress-Archive -Path '${fileDetails.map(f => f.path.replace(/'/g, "''")).join("','")}'`;
+        zipCommand += ` -DestinationPath '${zipFilePath.replace(/'/g, "''")}'`;
+        zipCommand += ` -Force"`;
+      } else {
+        // On Unix-like systems (Linux, macOS), use the zip command
+        zipCommand = `zip -j "${zipFilePath}"`;
+        fileDetails.forEach(file => {
+          zipCommand += ` "${file.path.replace(/"/g, '\\"')}"`;
+        });
+      }
+      
+      // Execute the zip command
+      exec(zipCommand, (error, stdout, stderr) => {
+        if (error) {
+          console.error('Error creating ZIP archive:', error);
+          // Fallback to manual concatenation if zip command fails
+          return sendManualDownload(res, fileDetails);
+        }
+        
+        // Stream the zip file to the client
+        const zipStream = fs.createReadStream(zipFilePath);
+        
+        zipStream.on('error', (err) => {
+          console.error('Error streaming ZIP file:', err);
+          if (!res.headersSent) {
+            sendError(res, 500, `Error streaming ZIP: ${err.message}`);
+          }
+        });
+        
+        zipStream.on('end', () => {
+          // Clean up the temporary file and directory
+          fs.unlink(zipFilePath, (err) => {
+            if (err) console.error('Failed to clean up ZIP file:', err);
+            
+            // Try to remove the temporary directory
+            try {
+              fs.rmdirSync(tmpDir);
+            } catch (e) {
+              console.error('Failed to clean up temporary directory:', e);
+            }
+          });
+        });
+        
+        // Pipe the ZIP file to the response
+        zipStream.pipe(res);
+      });
+      
+      // Function to handle manual download if zip command fails
+      function sendManualDownload(res, files) {
+        console.log('Falling back to manual file concatenation');
+        
+        // Signal the start of streaming
+        if (!res.headersSent) {
+          res.writeHead(200, {
+            'Content-Type': 'application/octet-stream',
+            'Content-Disposition': `attachment; filename="files_${timestamp}.dat"`
+          });
+        }
+        
+        // Process each file sequentially
+        let currentFileIndex = 0;
+        
+        const processNextFile = () => {
+          if (currentFileIndex >= files.length) {
+            // All files processed, end the response
+            return res.end();
+          }
+          
+          const fileInfo = files[currentFileIndex];
+          const readStream = fs.createReadStream(fileInfo.path);
+          
+          // Write file header with metadata
+          const headerStr = JSON.stringify({
+            name: fileInfo.name,
+            size: fileInfo.size,
+            index: currentFileIndex
+          });
+          const headerBuf = Buffer.from(headerStr);
+          const headerLenBuf = Buffer.alloc(4);
+          headerLenBuf.writeUInt32BE(headerBuf.length, 0);
+          
+          // Write header length and header
+          res.write(headerLenBuf);
+          res.write(headerBuf);
+          
+          // Stream the file content
+          readStream.on('data', chunk => res.write(chunk));
+          
+          readStream.on('end', () => {
+            currentFileIndex++;
+            processNextFile();
+          });
+          
+          readStream.on('error', err => {
+            console.error(`Error reading file ${fileInfo.name}:`, err);
+            currentFileIndex++;
+            processNextFile();
+          });
+        };
+        
+        // Start processing files
+        processNextFile();
+      }
+    } catch (err) {
+      console.error('Multi-download error:', err);
+      sendError(res, 500, `Server error: ${err.message}`);
+    }
+  }
+
+  // -------------------------------------------
+  // 12) Fallback: serve static from ./public
   // -------------------------------------------
   else if (req.method === 'GET') {
     let filePath = '.' + pathname;
@@ -561,7 +826,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------
-  // 11) 404 Not Found
+  // 13) 404 Not Found
   // -------------------------------------------
   else {
     res.writeHead(404);
@@ -582,7 +847,26 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3999;
 server.listen(PORT, () => {
   console.log(`Server listening at http://localhost:${PORT}`);
 });
+
+// Helper function to identify file types based on extension
+function getFileType(extension) {
+  const imageTypes = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'tiff', 'ico'];
+  const docTypes = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'rtf', 'csv', 'md', 'json'];
+  const archiveTypes = ['zip', 'rar', '7z', 'tar', 'gz', 'bz2'];
+  const audioTypes = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a'];
+  const videoTypes = ['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv'];
+  const codeTypes = ['js', 'ts', 'html', 'css', 'scss', 'php', 'py', 'java', 'c', 'cpp', 'h', 'cs', 'rb', 'go', 'rs'];
+  
+  if (imageTypes.includes(extension)) return 'image';
+  if (docTypes.includes(extension)) return 'document';
+  if (archiveTypes.includes(extension)) return 'archive';
+  if (audioTypes.includes(extension)) return 'audio';
+  if (videoTypes.includes(extension)) return 'video';
+  if (codeTypes.includes(extension)) return 'code';
+  
+  return 'other';
+}
