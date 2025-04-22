@@ -529,7 +529,7 @@ const server = http.createServer(async (req, res) => {
                 });
               }
             } catch (statErr) {
-              console.error(`Error getting stats for ${item}:`, statErr);
+              // console.error(`Error getting stats for ${item}:`, statErr);
               // Still include the file with limited info
               fileList.push({ 
                 name: item, 
