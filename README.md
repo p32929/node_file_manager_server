@@ -6,7 +6,7 @@ It comes with a **built-in file explorer** so you can **navigate directories to 
 
 # Screenshots
 
-https://github.com/user-attachments/assets/65bb6412-a6c8-4716-8332-b5c5f196ddc5
+https://github.com/user-attachments/assets/813328ac-4639-4804-a269-c67a0fa2bea6
 
 ---
 
