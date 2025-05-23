@@ -301,13 +301,20 @@ const server = http.createServer(async (req, res) => {
 
       if (!fileName) return sendError(res, 400, 'Missing file name');
 
-      // Create target dir if needed
+      // Create target dir if needed (including nested directories for folder uploads)
       const outDir = path.resolve(targetPath);
       if (!fs.existsSync(outDir)) {
         fs.mkdirSync(outDir, { recursive: true });
       }
 
       const finalFilePath = path.join(outDir, fileName);
+      
+      // Ensure the parent directory of the file exists (for nested folder uploads)
+      const fileDir = path.dirname(finalFilePath);
+      if (!fs.existsSync(fileDir)) {
+        fs.mkdirSync(fileDir, { recursive: true });
+      }
+      
       const isSingleChunk = (totalChunks === 1 && chunkIndex === 0);
 
       // If single-chunk => just pipe it to disk
@@ -830,7 +837,7 @@ const server = http.createServer(async (req, res) => {
   // -------------------------------------------
   else {
     res.writeHead(404);
-    res.end('Not found');
+    res.end('Not Found');
   }
 });
 
@@ -847,9 +854,10 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-const PORT = process.env.PORT || 3999;
+// Start server
+const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
-  console.log(`Server listening at http://localhost:${PORT}`);
+  console.log(`Server running at http://localhost:${PORT}/`);
 });
 
 // Helper function to identify file types based on extension
