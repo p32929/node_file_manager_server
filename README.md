@@ -1,72 +1,71 @@
 # File Manager Server
 
-A **lightweight, self-hosted file manager** with **zero external dependencies**. Just **clone the repo, run it with Node.js, and start managing files**—no need to install any extra packages.  
-
-It comes with a **built-in file explorer** so you can **navigate directories to upload and download files** on the system. The **UI is simple and intuitive**, making file transfers effortless.  
-
-# Screenshots
+[WIP] A lightweight, self-hosted file manager with **zero external dependencies**. Clone it, run it with Node.js, and you have a browser file explorer for uploading and downloading files on that machine — no npm install, no FTP, no SSH.
 
 https://github.com/user-attachments/assets/813328ac-4639-4804-a269-c67a0fa2bea6
 
----
+## Features
 
-## **Why Use This?**  
-✅ **No External Dependencies** – Just **Node.js** and you're ready to go.  
-✅ **Quick & Easy Setup** – **Clone & run** without installing anything.  
-✅ **Built-in File Explorer** – Navigate and work with your files.  
-✅ **File Upload** – Upload files to any directory with real-time progress.  
-✅ **File Download** – Download single files or multiple files as a ZIP archive.  
-✅ **Grid & List Views** – Choose how you want to see your files.  
-✅ **Real-Time Progress** – See **upload speed, remaining time, and progress**.  
-✅ **File Type Recognition** – Visual indicators for different file types.  
+- **Built-in file explorer** — browse directories, grid or list view
+- **Upload to any directory** with chunked transfers, so large files survive a flaky connection
+- **Real-time progress** — speed, estimated time remaining, and a cancel button
+- **Download one file, or several as a ZIP**
+- **File type icons** so you can see what's what at a glance
+- **Zero dependencies** — just Node.js and `server.js`
 
----
+## How to run it
 
-## **When to Use It?**  
-- When you need a **fast and hassle-free file manager** without setting up FTP or SSH.  
-- If you want a **temporary file transfer tool** for quick uploads and downloads.  
-- When you need **full control** over where files get saved and accessed.  
+```bash
+git clone https://github.com/p32929/node_file_manager_server.git
+cd node_file_manager_server
+node server.js
+```
 
-## **When NOT to Use It?**  
-- If **security is a concern**, as this has **no authentication** by default.  
-- For **long-term deployment**—this is designed for **temporary file management**.  
-- If you need **multi-user access** or permissions control.  
+Then open `http://<server-ip>:3999` in a browser and start browsing.
 
----
+Press `Ctrl+C` in the terminal to stop it.
 
-## **How to Run It?**  
-1. **Install Node.js** (if not already installed).  
-2. Clone the repository and run the server:  
-   ```sh
-   node server.js
-   ```  
-3. Open a browser and go to:  
-   ```
-   http://<server-ip>:3999
-   ```  
-4. **Browse directories** to view, download, or upload files.  
+## When to use it
 
----
+- You need a fast file transfer without setting up FTP or SSH
+- You want a temporary transfer tool between two machines
+- You want full control over exactly where files land
 
-## **Features:**
+## When NOT to use it
 
-### File Downloads
-- **Single File Download**: Click the download button next to any file
-- **Multi-File Download**: Select multiple files and download them as a ZIP archive
-- **File Types**: Files are categorized by type with appropriate icons
-- **View Modes**: Switch between grid and list views
+- **If security matters** — there is **no authentication** by default. Anyone who can reach the port can read and write files.
+- For long-term deployment — this is meant to be started, used, and stopped
+- If you need multiple users or permissions
 
-### File Uploads
-- **Target Selection**: Choose where to save your uploads
-- **Chunked Uploads**: Large files are split into chunks for reliable transfers
-- **Progress Tracking**: Monitor upload speed and estimated time remaining
-- **Cancel Option**: Stop uploads in progress if needed
+> Only run it while you need it, and never expose it to the public internet without putting auth in front of it.
 
----
+## License
 
-## **Important Notes:**  
-- **Only use this tool temporarily**—once done, it's best to stop the server.  
-- **Press Ctrl+C** in the terminal to stop the server.  
-- If running on a public server, **secure it** before exposing it online.  
+MIT License — Copyright (c) Fayaz Bin Salam. See [LICENSE](LICENSE) for the full text.
 
-This tool is meant for **quick, local file transfers** and is designed for **ease of use with no setup required**. Just **run it and start managing your files—nothing else needed.**
+## Contributing
+
+Contributions are warmly welcomed and greatly appreciated! Whether it's a bug fix, new feature, or improvement, your input helps make this project better for everyone.
+
+Before submitting a pull request, please:
+
+1. Create an issue describing the feature or bug fix you'd like to work on
+2. Wait for discussion and approval to ensure alignment with project goals
+3. Fork the repository and create your feature branch
+4. Submit your pull request with a clear description of changes
+
+This approach helps avoid duplicate efforts and ensures smooth collaboration. Thank you for considering contributing!
+
+## Share
+
+Sharing this repository with your friends is just one click away from here
+
+[![facebook](https://user-images.githubusercontent.com/6418354/179013321-ac1d1452-0689-493f-9066-940cf2302b6e.png)](https://www.facebook.com/sharer/sharer.php?u=https://github.com/p32929/node_file_manager_server/)
+[![twitter](https://user-images.githubusercontent.com/6418354/179013351-7d8d6d1c-4ce2-46ab-bef8-4c4765a1b888.png)](https://twitter.com/intent/tweet?url=https://github.com/p32929/node_file_manager_server/)
+[![tumblr](https://user-images.githubusercontent.com/6418354/179013343-3111f55a-3b90-40c7-8487-9777348672b0.png)](https://www.tumblr.com/share?v=3&u=https://github.com/p32929/node_file_manager_server/)
+[![pocket](https://user-images.githubusercontent.com/6418354/179013334-b095c45f-becf-49f4-9ee1-5a731a9b1f85.png)](https://getpocket.com/save?url=https://github.com/p32929/node_file_manager_server/)
+[![pinterest](https://user-images.githubusercontent.com/6418354/179013331-44cd9206-11b1-4b65-becb-5863b61c828f.png)](https://pinterest.com/pin/create/button/?url=https://github.com/p32929/node_file_manager_server/)
+[![reddit](https://user-images.githubusercontent.com/6418354/179013338-7416ae3f-73ba-4522-86e1-1374d7082d22.png)](https://www.reddit.com/submit?url=https://github.com/p32929/node_file_manager_server/)
+[![linkedin](https://user-images.githubusercontent.com/6418354/179013327-ca7b7102-1da8-4b1c-858f-1a6e5f21bd70.png)](https://www.linkedin.com/shareArticle?mini=true&url=https://github.com/p32929/node_file_manager_server/)
+[![whatsapp](https://user-images.githubusercontent.com/6418354/179013353-f477fa0b-3e6f-4138-a357-c9991b23ff88.png)](https://api.whatsapp.com/send?text=https://github.com/p32929/node_file_manager_server/)
+
