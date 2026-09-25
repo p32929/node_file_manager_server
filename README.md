@@ -69,3 +69,19 @@ Sharing this repository with your friends is just one click away from here
 [![linkedin](https://user-images.githubusercontent.com/6418354/179013327-ca7b7102-1da8-4b1c-858f-1a6e5f21bd70.png)](https://www.linkedin.com/shareArticle?mini=true&url=https://github.com/p32929/node_file_manager_server/)
 [![whatsapp](https://user-images.githubusercontent.com/6418354/179013353-f477fa0b-3e6f-4138-a357-c9991b23ff88.png)](https://api.whatsapp.com/send?text=https://github.com/p32929/node_file_manager_server/)
 
+<!-- hire-block -->
+
+---
+
+## 💼 Using this at a company?
+
+I do fixed-price delivery work on my own projects. One invoice, one date, no hourly billing:
+
+| | |
+|---|---|
+| **White-label build** — this project rebranded, extended and deployed as yours | **$6,500** · 3 weeks |
+| **Custom app from scratch** on my own stack, signed and auto-updating | **$12,500** · 6 weeks |
+| **Production-hardening sprint** — 72 hours on this project, for your load and your security review | **$999** |
+| **Ongoing capacity** — one project-week of my time reserved every month | **$9,000 / month** |
+
+Full details → **[p32929.github.io/hire](https://p32929.github.io/hire/)** · Email **[fayazdevinbox@uberip.com](mailto:fayazdevinbox@uberip.com)** — scoping and quotes are free and I answer within one business day.
